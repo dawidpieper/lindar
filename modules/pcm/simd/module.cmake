@@ -1,0 +1,1 @@
+lnd_add_module(simd HEADER lindar_simd.h SOURCES biquad.c dispatch.c pcm_integer.c x86.c x86_sse2.c x86_avx.c x86_avx2.c x86_avx512.c neon.c sinc_neon.c sinc_sse2.c sinc_avx.c sinc_avx512.c REQUIRES pcm_float audio SETUP setup.cmake)

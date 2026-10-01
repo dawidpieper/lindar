@@ -1,0 +1,217 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "msys2-clangarm64",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "C:/msys64/clangarm64/bin/gcc.exe",
+        "CMAKE_MAKE_PROGRAM": "C:/Strawberry/c/bin/ninja.exe"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "msys2-clangarm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "msys2-clangarm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "minimal",
+      "displayName": "Minimal manual PCM",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LND_MINIMAL": "ON",
+        "LND_OS_MODE": "OFF",
+        "LND_THREADS": "OFF",
+        "LND_USE_LIBC_ALLOC": "OFF",
+        "LND_BUILD_EXAMPLES": "ON"
+      }
+    },
+    {
+      "name": "adpcm-mcu",
+      "displayName": "Single-threaded ADPCM WAV playback",
+      "inherits": "minimal",
+      "cacheVariables": {
+        "LND_BUILD_ENCODERS": "OFF",
+        "LND_MODULE_IO": "ON",
+        "LND_MODULE_CODECS": "ON",
+        "LND_MODULE_ADPCM": "ON"
+      }
+    },
+    {
+      "name": "opus-mcu",
+      "displayName": "Single-threaded fixed-point Ogg Opus playback",
+      "inherits": "minimal",
+      "cacheVariables": {
+        "LND_BUILD_ENCODERS": "OFF",
+        "LND_MODULE_IO": "ON",
+        "LND_MODULE_CODECS": "ON",
+        "LND_MODULE_OPUS": "ON",
+        "LND_MODULE_OGG": "ON",
+        "OPUS_FIXED_POINT": "ON",
+        "OPUS_ENABLE_FLOAT_API": "OFF",
+        "OPUS_DISABLE_INTRINSICS": "ON",
+        "OPUS_STACK_PROTECTOR": "OFF",
+        "OPUS_HARDENING": "OFF",
+        "OPUS_FORTIFY_SOURCE": "OFF"
+      }
+    },
+    {
+      "name": "lindar-package",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linda",
+      "displayName": "Core PCM",
+      "inherits": "lindar-package",
+      "cacheVariables": {
+        "LND_PACKAGE": "linda"
+      }
+    },
+    {
+      "name": "lindar_pitya",
+      "displayName": "Basic graph and WAV audio",
+      "inherits": "lindar-package",
+      "cacheVariables": {
+        "LND_PACKAGE": "lindar_pitya"
+      }
+    },
+    {
+      "name": "lindar",
+      "displayName": "Standard audio",
+      "inherits": "lindar-package",
+      "cacheVariables": {
+        "LND_PACKAGE": "lindar"
+      }
+    },
+    {
+      "name": "lindar_quanta",
+      "displayName": "Full audio",
+      "inherits": "lindar-package",
+      "cacheVariables": {
+        "LND_PACKAGE": "lindar_quanta",
+        "LND_FFMPEG_BUNDLED": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "minimal",
+      "configurePreset": "minimal"
+    },
+    {
+      "name": "adpcm-mcu",
+      "configurePreset": "adpcm-mcu"
+    },
+    {
+      "name": "opus-mcu",
+      "configurePreset": "opus-mcu"
+    },
+    {
+      "name": "linda",
+      "configurePreset": "linda"
+    },
+    {
+      "name": "lindar_pitya",
+      "configurePreset": "lindar_pitya"
+    },
+    {
+      "name": "lindar",
+      "configurePreset": "lindar"
+    },
+    {
+      "name": "lindar_quanta",
+      "configurePreset": "lindar_quanta"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "minimal",
+      "configurePreset": "minimal",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "adpcm-mcu",
+      "configurePreset": "adpcm-mcu",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "opus-mcu",
+      "configurePreset": "opus-mcu",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linda",
+      "configurePreset": "linda",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "lindar_pitya",
+      "configurePreset": "lindar_pitya",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "lindar",
+      "configurePreset": "lindar",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "lindar_quanta",
+      "configurePreset": "lindar_quanta",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

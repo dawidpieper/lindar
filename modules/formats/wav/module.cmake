@@ -1,0 +1,1 @@
+lnd_add_module(wav PRIORITY 01 DECODER ENCODER DECODER_REQUIRES riff)

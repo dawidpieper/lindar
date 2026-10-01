@@ -1,0 +1,6 @@
+lnd_vendor_curl()
+if(ANDROID)
+    list(APPEND ARG_SOURCES android.c)
+    list(APPEND ARG_LIBS c-ares::cares_static)
+endif()
+list(APPEND ARG_DEFINES LND_HTTP_OPENSSL=$<STREQUAL:${LND_CURL_TLS},OPENSSL>)

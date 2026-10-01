@@ -1,0 +1,15 @@
+#pragma once
+
+#include "lindar_audio.h"
+
+#ifndef LND_DEFAULT_RESAMPLE_QUALITY
+#define LND_DEFAULT_RESAMPLE_QUALITY 2
+#endif
+
+#ifndef LND_DEFAULT_CHANNEL_MIX
+#define LND_DEFAULT_CHANNEL_MIX LND_CHANNEL_MIX_MATRIX
+#endif
+
+#ifndef LND_DEFAULT_SIMD
+#define LND_DEFAULT_SIMD LND_SIMD_AUTO
+#endif

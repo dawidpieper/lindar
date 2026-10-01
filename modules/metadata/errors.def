@@ -1,0 +1,2 @@
+LND_ERROR(LND_METADATA_ERR_LIMIT, "metadata limit exceeded")
+LND_ERROR(LND_METADATA_ERR_NOT_FOUND, "metadata not found")

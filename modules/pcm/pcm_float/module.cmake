@@ -1,0 +1,1 @@
+lnd_add_module(pcm_float DEFINES LND_INTERNAL_FORMAT_MAX=LND_FORMAT_F64 LND_DEFAULT_INTERNAL_FORMAT=LND_FORMAT_F32 SOURCES pcm_float.c playback.c HEADER lindar_pcm_float.h)

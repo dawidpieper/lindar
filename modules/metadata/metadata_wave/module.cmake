@@ -1,0 +1,1 @@
+lnd_add_module(metadata_wave PROVIDES metadata_format PROVIDER_KIND NATIVE PROVIDER lnd_metadata_wave_io SOURCES_IF metadata_io:io.c REQUIRES metadata riff SOURCES wave.c HEADER lindar_metadata_wave.h)

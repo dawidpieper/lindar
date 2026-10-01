@@ -1,0 +1,96 @@
+name: CLA
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  cla:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request && github.event.comment.user.type == 'User' &&
+       (github.event.comment.body == 'recheck' || startsWith(github.event.comment.body, 'I agree to the Lindar CLA (')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: cla-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - id: agreement
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const repo = context.repo;
+            const number = context.payload.pull_request?.number || context.payload.issue.number;
+            const {data: pull} = await github.rest.pulls.get({...repo, pull_number: number});
+            if (pull.state !== 'open') return;
+            const {data: base} = await github.rest.git.getRef({
+              ...repo, ref: `heads/${context.payload.repository.default_branch}`
+            });
+            const {data: document} = await github.rest.repos.getContent({
+              ...repo, path: 'docs/cla.md', ref: base.object.sha
+            });
+            if (document.type !== 'file') throw new Error('CLA must be a file');
+            const phrase = `I agree to the Lindar CLA (${document.sha}).`;
+            if (context.eventName === 'issue_comment') {
+              const body = context.payload.comment.body.trim().toLowerCase();
+              if (body !== 'recheck' && body !== phrase.toLowerCase()) return;
+              context.payload.pull_request = pull;
+              require('fs').writeFileSync(process.env.GITHUB_EVENT_PATH, JSON.stringify(context.payload));
+            }
+            const branch = 'cla-signatures';
+            try {
+              await github.rest.git.getRef({...repo, ref: `heads/${branch}`});
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.git.createRef({...repo, ref: `refs/heads/${branch}`, sha: base.object.sha});
+            }
+            await github.rest.repos.createCommitStatus({
+              ...repo, sha: pull.head.sha, context: 'CLA', state: 'pending',
+              description: 'Checking contributor agreement',
+              target_url: `${process.env.GITHUB_SERVER_URL}/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`
+            });
+            core.setOutput('head', pull.head.sha);
+            core.setOutput('number', number);
+            core.setOutput('document', `${process.env.GITHUB_SERVER_URL}/${repo.owner}/${repo.repo}/blob/${base.object.sha}/docs/cla.md`);
+            core.setOutput('signatures', `signatures/${document.sha}.json`);
+            core.setOutput('phrase', phrase);
+      - id: signatures
+        if: steps.agreement.outputs.head != ''
+        uses: iainmcgin/cla-github-action@3e58ace6af840f66fcd80f68c08d76559140df5e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          path-to-document: ${{ steps.agreement.outputs.document }}
+          path-to-signatures: ${{ steps.agreement.outputs.signatures }}
+          branch: cla-signatures
+          custom-pr-sign-comment: ${{ steps.agreement.outputs.phrase }}
+          lock-pullrequest-aftermerge: 'false'
+      - if: always() && steps.agreement.outputs.head != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CLA_HEAD: ${{ steps.agreement.outputs.head }}
+          CLA_PR: ${{ steps.agreement.outputs.number }}
+          CLA_RESULT: ${{ steps.signatures.outcome }}
+        with:
+          script: |
+            const {data: pull} = await github.rest.pulls.get({
+              ...context.repo, pull_number: Number(process.env.CLA_PR)
+            });
+            const passed = process.env.CLA_RESULT === 'success' && pull.head.sha === process.env.CLA_HEAD;
+            await github.rest.repos.createCommitStatus({
+              ...context.repo, sha: process.env.CLA_HEAD, context: 'CLA',
+              state: passed ? 'success' : 'failure',
+              description: passed ? 'Contributor agreements recorded' : 'Contributor agreement required',
+              target_url: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

@@ -1,0 +1,2 @@
+lnd_vendor_opusfile()
+list(APPEND ARG_DEFINES LND_OPUS_INTEGER=$<BOOL:${OPUS_FIXED_POINT}>)

@@ -1,0 +1,65 @@
+name: Build environment
+description: Native C23 tools and runtime dependencies
+inputs:
+  compiler:
+    description: Linux compiler family
+    default: clang
+runs:
+  using: composite
+  steps:
+    - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8
+      with:
+        ruby-version: '3.4'
+    - if: runner.os == 'Windows'
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+      with:
+        msystem: CLANG64
+        path-type: inherit
+        install: >-
+          make perl diffutils
+          mingw-w64-clang-x86_64-clang
+          mingw-w64-clang-x86_64-cmake
+          mingw-w64-clang-x86_64-ninja
+          mingw-w64-clang-x86_64-ccache
+          mingw-w64-clang-x86_64-nasm
+          mingw-w64-clang-x86_64-pkgconf
+    - if: runner.os == 'Windows'
+      shell: msys2 {0}
+      run: |
+        cygpath -w /clang64/bin >> "$GITHUB_PATH"
+        echo "CC=$(cygpath -m /clang64/bin/clang.exe)" >> "$GITHUB_ENV"
+        echo "CXX=$(cygpath -m /clang64/bin/clang++.exe)" >> "$GITHUB_ENV"
+        echo "LND_RUNTIME_DIR=$(cygpath -m /clang64/bin)" >> "$GITHUB_ENV"
+    - if: runner.os == 'Linux'
+      shell: bash
+      env:
+        COMPILER: ${{ inputs.compiler }}
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends ccache ninja-build nasm \
+          libasound2-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+          gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav
+        if [ "$COMPILER" = gcc ]; then
+          sudo apt-get install -y --no-install-recommends gcc-14 g++-14 ffmpeg speex sox gstreamer1.0-tools
+          echo 'CC=gcc-14' >> "$GITHUB_ENV"
+          echo 'CXX=g++-14' >> "$GITHUB_ENV"
+        else
+          echo 'CC=clang-18' >> "$GITHUB_ENV"
+          echo 'CXX=clang++-18' >> "$GITHUB_ENV"
+        fi
+    - if: runner.os == 'macOS'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      run: |
+        brew install ccache ninja
+        echo 'CC=/usr/bin/clang' >> "$GITHUB_ENV"
+        echo 'CXX=/usr/bin/clang++' >> "$GITHUB_ENV"
+    - shell: bash
+      run: |
+        echo "CCACHE_DIR=$RUNNER_TEMP/lindar-ccache" >> "$GITHUB_ENV"
+        echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        echo 'CCACHE_MAXSIZE=256M' >> "$GITHUB_ENV"
+        echo 'CMAKE_C_COMPILER_LAUNCHER=ccache' >> "$GITHUB_ENV"
+        echo 'CMAKE_CXX_COMPILER_LAUNCHER=ccache' >> "$GITHUB_ENV"

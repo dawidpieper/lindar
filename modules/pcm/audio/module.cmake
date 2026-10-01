@@ -1,0 +1,6 @@
+lnd_add_module(audio CONFIG config.def HEADER lindar_audio.h INTERNAL SOURCES pcm.c channels.c convert.c simd.c sinc.c resample.c cpu.c INIT lnd_pcm_init PRIORITY 05)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/simd.c ${CMAKE_CURRENT_LIST_DIR}/sinc.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+elseif(MSVC)
+    set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/simd.c ${CMAKE_CURRENT_LIST_DIR}/sinc.c PROPERTIES COMPILE_OPTIONS "/fp:strict")
+endif()

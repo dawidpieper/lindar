@@ -1,0 +1,110 @@
+[submodule "vendor/bungee"]
+	path = vendor/bungee
+	commit = 8cb6977d0c1a1b411ac320493b3c7f5182ed2d22
+	url = https://github.com/bungee-audio-stretch/bungee.git
+	shallow = true
+	release = v2.4.30
+[submodule "vendor/c-ares"]
+	path = vendor/c-ares
+	commit = c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab
+	url = https://github.com/c-ares/c-ares.git
+	shallow = true
+	release = v1.34.8
+[submodule "vendor/cacert"]
+	path = vendor/cacert
+	commit = ab325adf04921579c89f77559fce20f964695ca9
+	url = https://github.com/bagder/ca-bundle.git
+	shallow = true
+[submodule "vendor/curl"]
+	path = vendor/curl
+	commit = 01346829096c61b372692f6dc43ffa778c6caccd
+	url = https://github.com/curl/curl.git
+	shallow = true
+	release = curl-8_22_0
+[submodule "vendor/cwasio"]
+	path = vendor/cwasio
+	commit = 421ac19b6ecf2c70bf58e024f1d574a36000ca1f
+	url = https://github.com/s13n/cwASIO.git
+	shallow = true
+[submodule "vendor/fdk-aac"]
+	path = vendor/fdk-aac
+	commit = 716f4394641d53f0d79c9ddac3fa93b03a49f278
+	url = https://github.com/mstorsjo/fdk-aac.git
+	shallow = true
+	release = v2.0.3
+[submodule "vendor/ffmpeg"]
+	path = vendor/ffmpeg
+	commit = 946fcce07b6dcd0331c8cc609192aeff5e1924f8
+	url = https://github.com/FFmpeg/FFmpeg.git
+	shallow = true
+	release = n9.0.2
+[submodule "vendor/flac"]
+	path = vendor/flac
+	commit = 1507800de4b70e21be71f38caa0d9079d0bc6e45
+	url = https://github.com/xiph/flac.git
+	shallow = true
+	release = 1.5.0
+[submodule "vendor/lame"]
+	path = vendor/lame
+	commit = 5a2d347159f9e6e441ee436407949e122ae802dc
+	url = https://github.com/enzo1982/lame.git
+	shallow = true
+	release = RELEASE__4_0
+[submodule "vendor/minimp3"]
+	path = vendor/minimp3
+	commit = ea99364f61c14656440e8d77e9c233ccf3124633
+	url = https://github.com/lieff/minimp3.git
+	shallow = true
+[submodule "vendor/ogg"]
+	path = vendor/ogg
+	commit = be05b13e98b048f0b5a0f5fa8ce514d56db5f822
+	url = https://github.com/xiph/ogg.git
+	shallow = true
+	release = v1.3.6
+[submodule "vendor/openssl"]
+	path = vendor/openssl
+	commit = af1775b60dfa141a4ad762585052cabeb9f37e9e
+	url = https://github.com/openssl/openssl.git
+	shallow = true
+	release = openssl-4.0.3
+[submodule "vendor/opus"]
+	path = vendor/opus
+	commit = 22244de5a79bd1d6d623c32e72bf1954b56235be
+	url = https://github.com/xiph/opus.git
+	shallow = true
+	release = v1.6.1
+[submodule "vendor/opusfile"]
+	path = vendor/opusfile
+	commit = a55c164e9891a9326188b7d4d216ec9a88373739
+	url = https://github.com/xiph/opusfile.git
+	shallow = true
+	release = v0.12
+[submodule "vendor/soundtouch"]
+	path = vendor/soundtouch
+	commit = 0047e0b1ecfceb041348579119bf79b73a322a3a
+	url = https://codeberg.org/soundtouch/soundtouch.git
+	shallow = true
+	release = 2.4.1
+[submodule "vendor/speex"]
+	path = vendor/speex
+	commit = 5dceaaf3e23ee7fd17c80cb5f02a838fd6c18e01
+	url = https://github.com/xiph/speex.git
+	shallow = true
+	release = Speex-1.2.1
+[submodule "vendor/tinysoundfont"]
+	path = vendor/tinysoundfont
+	commit = 853a0a171759f1ddba0de1442133a75912bbeffa
+	url = https://github.com/schellingb/TinySoundFont.git
+	shallow = true
+[submodule "vendor/vorbis"]
+	path = vendor/vorbis
+	commit = 0657aee69dec8508a0011f47f3b69d7538e9d262
+	url = https://github.com/xiph/vorbis.git
+	shallow = true
+	release = v1.3.7
+[submodule "vendor/vst3_pluginterfaces"]
+	path = vendor/vst3_pluginterfaces
+	commit = 4f547e8e102b47de4a8b8aaf343c73b700786372
+	url = https://github.com/steinbergmedia/vst3_pluginterfaces.git
+	shallow = true
+	release = v3.8.1_build_84

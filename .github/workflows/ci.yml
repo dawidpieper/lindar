@@ -1,0 +1,268 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+    inputs:
+      full:
+        description: All packages, profiles and MCU boards
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: '2'
+  CTEST_PARALLEL_LEVEL: '2'
+  CMAKE_GENERATOR: Ninja
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      native: ${{ steps.plan.outputs.native }}
+      docs: ${{ steps.plan.outputs.docs }}
+      mcu: ${{ steps.plan.outputs.mcu }}
+      full: ${{ steps.plan.outputs.full }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: true
+      - id: plan
+        run: ruby tools/ci/run.rb plan
+      - run: ruby tools/ci/run.rb check
+      - run: ruby tools/ci/download.rb actionlint
+      - run: actionlint -shellcheck=''
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: check-logs
+          path: build/ci/*.log
+          retention-days: 1
+
+  native:
+    needs: checks
+    if: needs.checks.outputs.native == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-x64
+          - runner: windows-2025
+            platform: windows-x64
+          - runner: macos-15
+            platform: macos-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      LND_CI_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-env
+      - run: ruby tools/vendor.rb
+      - id: key
+        run: ruby tools/ci/run.rb cache-key
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            ${{ env.CCACHE_DIR }}
+            build/ci/native/vendor/openssl
+            build/ci/native/vendor/ffmpeg
+      - run: ruby tools/ci/run.rb native
+      - if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            ${{ env.CCACHE_DIR }}
+            build/ci/native/vendor/openssl
+            build/ci/native/vendor/ffmpeg
+      - if: github.event_name != 'pull_request'
+        env:
+          FULL: ${{ needs.checks.outputs.full }}
+        run: |
+          if [ "$FULL" = true ]; then
+            ruby tools/ci/run.rb packages --full
+          else
+            ruby tools/ci/run.rb packages
+          fi
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: libraries-${{ matrix.platform }}
+          path: |
+            build/ci/*.tar.gz
+            build/ci/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tests-${{ matrix.platform }}
+          path: |
+            build/ci/*.log
+            build/ci/*.xml
+            build/ci/native/Testing/Temporary/*.log
+            build/ci/native/vendor/ffmpeg/ep/src/*-stamp/*.log
+            build/ci/native/vendor/openssl/*log
+          retention-days: 1
+          compression-level: 9
+
+  sanitise:
+    needs: checks
+    if: needs.checks.outputs.native == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CC: clang-18
+      CXX: clang++-18
+      LND_CI_BUILD: sanitise
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: ruby tools/vendor.rb ogg
+      - run: ruby tools/ci/run.rb sanitise
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sanitise-results
+          path: |
+            build/ci/*.log
+            build/ci/*.xml
+            build/ci/sanitise/Testing/Temporary/*.log
+          retention-days: 1
+          compression-level: 9
+
+  profiles:
+    needs: checks
+    if: needs.checks.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build-env
+        with:
+          compiler: gcc
+      - run: ruby tools/vendor.rb
+      - id: key
+        run: ruby tools/ci/run.rb cache-key
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            ${{ env.CCACHE_DIR }}
+            build/ci/native/vendor/openssl
+            build/ci/native/vendor/ffmpeg
+      - run: ruby tools/ci/run.rb profiles
+      - if: github.ref_name == github.event.repository.default_branch && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            ${{ env.CCACHE_DIR }}
+            build/ci/native/vendor/openssl
+            build/ci/native/vendor/ffmpeg
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-results
+          path: |
+            build/audit-profiles/*.log
+            build/ci/*.log
+            build/ci/*.xml
+          retention-days: 1
+          compression-level: 9
+
+  mcu:
+    needs: checks
+    if: needs.checks.outputs.mcu == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CC: clang-18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-system-misc bzip2
+      - run: ruby tools/ci/download.rb arm
+      - if: needs.checks.outputs.full == 'true'
+        run: ruby tools/ci/download.rb avr
+      - env:
+          FULL: ${{ needs.checks.outputs.full }}
+        run: |
+          boards=m33,m0
+          if [ "$FULL" = true ]; then boards=$boards,avr; fi
+          ruby tools/check_qemu.rb --boards "$boards"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mcu-results
+          path: |
+            build/qemu/**/*.log
+            build/qemu/**/*.json
+            build/qemu/**/*.map
+          retention-days: 1
+          compression-level: 9
+
+  docs:
+    needs: checks
+    if: needs.checks.outputs.docs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8
+        with:
+          ruby-version: '3.4'
+      - run: gem install rexml --version 3.4.4 --no-document
+      - run: ruby tools/ci/download.rb doxygen
+      - run: ruby tools/docs.rb
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: api-reference
+          path: build/docs/html
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
+
+  result:
+    needs: [checks, native, sanitise, profiles, mcu, docs]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          ruby -rjson -e 'exit(JSON.parse(ENV.fetch("RESULTS")).values.all? { |job| %w[success skipped].include?(job.fetch("result")) } ? 0 : 1)'

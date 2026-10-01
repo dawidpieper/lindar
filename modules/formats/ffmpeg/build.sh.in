@@ -1,0 +1,37 @@
+#!/bin/sh
+set -e
+PATH="/usr/bin:$PATH"
+src='@LND_FF_SRC@'
+build='@LND_FF_BUILD@'
+cc='@LND_FF_CC@'
+make='@LND_FF_MAKE@'
+jobs='@LND_FF_JOBS@'
+if command -v cygpath >/dev/null 2>&1; then
+    src=$(cygpath -u "$src")
+    build=$(cygpath -u "$build")
+    cc=$(cygpath -u "$cc")
+    make=$(cygpath -u "$make")
+    PATH="$(dirname "$make"):$PATH"
+    TMPDIR=/tmp
+    export TMPDIR
+fi
+PATH="$(dirname "$cc"):$PATH"
+export PATH
+mkdir -p "$build"
+cd "$build"
+case "$1" in
+    configure) exec sh "$src/configure" --cc="$cc" @LND_FF_FLAGS@ ;;
+    build)
+        if [ ! -x "$src/ffbuild/version.sh" ] || [ ! -x "$src/ffbuild/libversion.sh" ]; then
+            # Shared Windows checkouts can lose executable bits.
+            sed -e 's|$(SRC_PATH)/ffbuild/library.mak|ffbuild/lindar-library.mak|' \
+                -e 's|revision=$(REVISION) $(VERSION_SH)|revision=$(REVISION) sh $(VERSION_SH)|' \
+                "$src/Makefile" > lindar.mak
+            sed 's|$$(SRC_PATH)/ffbuild/|sh $$(SRC_PATH)/ffbuild/|' \
+                "$src/ffbuild/library.mak" > ffbuild/lindar-library.mak
+            exec "$make" -f lindar.mak -j"$jobs"
+        fi
+        exec "$make" -j"$jobs"
+        ;;
+    *) echo "usage: build.sh configure|build" >&2; exit 2 ;;
+esac

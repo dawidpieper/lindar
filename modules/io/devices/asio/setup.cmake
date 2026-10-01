@@ -1,0 +1,6 @@
+if(NOT EXISTS "${LND_VENDOR_DIR}/cwasio/src/cwASIOtypes.h")
+    message(FATAL_ERROR "ASIO requires the bundled vendor/cwasio headers")
+endif()
+if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND MSVC AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "32-bit ASIO requires Clang or GCC for C thiscall function pointers")
+endif()

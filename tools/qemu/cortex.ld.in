@@ -1,0 +1,28 @@
+ENTRY(reset)
+MEMORY {
+    ROM (rx) : ORIGIN = @rom_origin@, LENGTH = @rom_size@
+    RAM (rwx) : ORIGIN = @ram_origin@, LENGTH = @ram_size@
+}
+SECTIONS {
+    .vectors : { KEEP(*(.vectors)) } > ROM
+    .text : { *(.text*) *(.rodata*) } > ROM
+    .ARM.extab : { *(.ARM.extab*) } > ROM
+    .ARM.exidx : { *(.ARM.exidx*) } > ROM
+    .data : ALIGN(8) {
+        _data_start = .;
+        *(.data*)
+        . = ALIGN(8);
+        _data_end = .;
+    } > RAM AT > ROM
+    _data_load = LOADADDR(.data);
+    .bss (NOLOAD) : ALIGN(8) {
+        _bss_start = .;
+        *(.bss*) *(COMMON)
+        . = ALIGN(8);
+        _bss_end = .;
+    } > RAM
+    _end = .;
+    _stack_top = ORIGIN(RAM) + LENGTH(RAM);
+    _stack_bottom = _stack_top - 4096;
+    ASSERT(_end <= _stack_bottom, "Firmware leaves less than 4 KiB for stack")
+}

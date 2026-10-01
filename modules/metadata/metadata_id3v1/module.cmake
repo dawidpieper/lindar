@@ -1,0 +1,1 @@
+lnd_add_module(metadata_id3v1 PROVIDES metadata_format PROVIDER_KIND NATIVE PROVIDER lnd_metadata_id3v1_io SOURCES_IF metadata_io:io.c REQUIRES metadata SOURCES id3v1.c HEADER lindar_metadata_id3v1.h)

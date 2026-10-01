@@ -1,0 +1,1 @@
+lnd_add_module(ios PLATFORM IOS OS_MODE THREADS REQUIRES coreaudio SOURCES session.c native.m LANGUAGES OBJC HEADER lindar_ios.h LIBS "-framework AVFoundation" "-framework Foundation" objc SETUP setup.cmake FREE lnd_ios_free PRIORITY 9)

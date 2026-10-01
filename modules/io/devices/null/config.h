@@ -1,0 +1,12 @@
+#pragma once
+
+#include "lindar_null.h"
+
+extern LND_CONFIG_KEY *const LND_CFG_NULL_SINK_PROC;
+extern LND_CONFIG_KEY *const LND_CFG_NULL_SINK_USER;
+extern LND_CONFIG_KEY *const LND_CFG_NULL_SOURCE_PROC;
+extern LND_CONFIG_KEY *const LND_CFG_NULL_SOURCE_USER;
+
+#ifndef LND_DEFAULT_NULL_REALTIME
+#define LND_DEFAULT_NULL_REALTIME 1
+#endif

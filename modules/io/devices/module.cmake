@@ -1,0 +1,1 @@
+lnd_add_module(devices ERRORS errors.def CONFIG config.def OS_MODE THREADS SOURCES context.c engine.c device.c source.c capture.c backend.c REQUIRES graph REQUIRES_PROVIDER device_backend HEADER lindar_devices.h PRIORITY 10 INIT lnd_devices_init START lnd_devices_start STOP lnd_devices_stop FREE lnd_devices_free CONFIG_SET lnd_devices_config_set)

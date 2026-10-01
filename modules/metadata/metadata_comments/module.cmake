@@ -1,0 +1,1 @@
+lnd_add_module(metadata_comments PROVIDES metadata_format PROVIDER_KIND NATIVE PROVIDER lnd_metadata_opus_io lnd_metadata_vorbis_io lnd_metadata_flac_io SOURCES_IF metadata_io:io.c metadata_io:ogg.c SETUP setup.cmake REQUIRES metadata SOURCES comments.c HEADER lindar_metadata_comments.h)

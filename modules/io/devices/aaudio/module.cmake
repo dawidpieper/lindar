@@ -1,0 +1,1 @@
+lnd_add_module(aaudio PROVIDES device_backend PROVIDER_KIND NATIVE PROVIDER lnd_backend_aaudio_vt PLATFORM ANDROID MIN_API 26 OS_MODE THREADS SOURCES aaudio.c REQUIRES devices android HEADER lindar_aaudio.h LIBS aaudio dl)

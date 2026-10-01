@@ -1,0 +1,1 @@
+lnd_add_module(soundtouch PROVIDES stretch_backend PROVIDER_KIND NATIVE PROVIDER lnd_stretch_soundtouch DEFAULT OFF REQUIRES stretch LANGUAGES CXX SOURCES node.c LIBS lnd_soundtouch_bridge HEADER lindar_soundtouch.h SETUP setup.cmake)

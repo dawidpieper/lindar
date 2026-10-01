@@ -1,0 +1,6 @@
+set(lnd_coreaudio_requires devices)
+if(LND_PLATFORM_IOS)
+    list(APPEND lnd_coreaudio_requires ios)
+endif()
+lnd_add_module(coreaudio PROVIDES device_backend PROVIDER_KIND NATIVE PROVIDER lnd_backend_coreaudio_vt PLATFORM APPLE OS_MODE THREADS SOURCES audiounit.c REQUIRES ${lnd_coreaudio_requires} HEADER lindar_coreaudio.h LIBS "-framework AudioToolbox" "-framework CoreAudio" "-framework CoreFoundation")
+unset(lnd_coreaudio_requires)

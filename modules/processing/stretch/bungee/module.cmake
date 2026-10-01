@@ -1,0 +1,1 @@
+lnd_add_module(bungee PROVIDES stretch_backend PROVIDER_KIND EXTENSION PROVIDER lnd_stretch_bungee DEFAULT OFF REQUIRES stretch LANGUAGES CXX SOURCES node.c LIBS lnd_bungee_bridge HEADER lindar_bungee.h SETUP setup.cmake)
