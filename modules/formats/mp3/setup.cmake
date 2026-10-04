@@ -1,1 +1,5 @@
-lnd_vendor_lame()
+if(ARG_ENCODER)
+    lnd_vendor_lame()
+else()
+    list(REMOVE_ITEM ARG_LIBS lnd_lame)
+endif()
