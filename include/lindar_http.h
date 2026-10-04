@@ -92,7 +92,7 @@ typedef struct LND_HTTP_BUFFER_OPTIONS {
     uint32_t resume_ms; /**< Decoded audio required after a stall. */
     uint32_t pcm_ms; /**< Decoded PCM queue capacity in milliseconds. */
     size_t compressed_bytes; /**< Compressed decoder input capacity in bytes. */
-    size_t segment_bytes; /**< Maximum buffered segment or duration probe cache size in bytes. */
+    size_t segment_bytes; /**< Maximum segment or duration cache size in bytes; also limits complete Ogg responses. */
     size_t playlist_bytes; /**< Maximum downloaded playlist size in bytes. */
     uint32_t playlist_entries; /**< Maximum parsed playlist entries. */
     uint32_t event_count; /**< Maximum queued HTTP events. */
@@ -210,8 +210,9 @@ LND_API uint32_t LND_HttpGetCapabilities(void);
  * Incremental WAV, MP3, AAC, Opus, Vorbis and FLAC require their enabled codecs. HLS uses MP4/TS
  * demuxers; ffmpeg_stream adds Matroska/WebM/ASF. File-only decoders wait for a complete finite
  * response. Unsupported MP4 range indexes, edit layouts or servers fall back to complete-file decoding.
- * Finite Ogg duration probing needs byte ranges, a known size and a strong ETag. CFG is captured
- * at opening; probe failure preserves streaming. Duration may arrive after playback becomes ready.
+ * Finite Ogg duration uses validated byte ranges (known size, strong ETag) or one complete response
+ * within segment_bytes. CFG is captured at opening; probe failure preserves streaming.
+ * Duration may arrive after playback becomes ready.
  * open_timeout_ms runs from this call until playback is first ready, including short files reaching EOF.
  * Taking the source does not stop the timer. Expiry reports LND_HTTP_ERR_TIMEOUT without retrying and
  * discards initial PCM. Workers/updates enforce the deadline; transport callbacks must return promptly.

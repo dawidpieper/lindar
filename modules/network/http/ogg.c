@@ -18,12 +18,14 @@ struct lnd_http_ogg {
     lnd_ogg_range *ranges;
     lnd_ogg_range *pending;
     lnd_io io;
+    lnd_http_bytes *body;
     uint64_t missing;
     uint64_t requested;
     uint64_t last_data;
     size_t chunk;
     size_t allocated;
     size_t limit;
+    bool complete;
     bool miss;
     bool done;
 };
@@ -64,6 +66,12 @@ static lnd_ogg_range *lnd_ogg_http_range(lnd_http_ogg *ogg, uint64_t offset) {
 
 static int64_t lnd_ogg_http_read(void *state, uint64_t position, void *dst, size_t bytes) {
     lnd_http_ogg *ogg = state;
+    if (ogg->body) {
+        if (position >= ogg->body->size) return 0;
+        size_t take = LND_MIN(bytes, ogg->body->size - (size_t)position);
+        memcpy(dst, ogg->body->data + (size_t)position, take);
+        return (int64_t)take;
+    }
     if (ogg->miss) return LND_ERR_IO;
     uint64_t offset = position / ogg->chunk * ogg->chunk;
     for (lnd_ogg_range *range = ogg->ranges; range; range = range->next) {
@@ -81,9 +89,11 @@ static int64_t lnd_ogg_http_read(void *state, uint64_t position, void *dst, size
 static const lnd_io_vt lnd_ogg_http_io = {.read_at = lnd_ogg_http_read};
 
 lnd_http_ogg *lnd_http_ogg_begin(lnd_http_session *s, const uint8_t *data, size_t bytes) {
-    if (!s->probe_duration || s->info.live || !s->response.length_known || !s->response.accepts_ranges || s->response.etag[0] != '"' ||
-        s->response.icy_interval_bytes || s->response.content_length_bytes > INT64_MAX || !s->response.content_length_bytes)
+    if (!s->probe_duration || s->info.live || s->response.status != 200 || s->response.range || s->response.icy_interval_bytes ||
+        (s->response.length_known && (!s->response.content_length_bytes || s->response.content_length_bytes > INT64_MAX)))
         return nullptr;
+    bool full = !s->response.length_known || !s->response.accepts_ranges || s->response.etag[0] != '"';
+    if (full && s->response.length_known && s->response.content_length_bytes > s->options.buffer.segment_bytes) return nullptr;
 #if !LND_MODULE_OPUS_DECODER && !LND_MODULE_VORBIS_DECODER
     return nullptr;
 #endif
@@ -94,18 +104,22 @@ lnd_http_ogg *lnd_http_ogg_begin(lnd_http_session *s, const uint8_t *data, size_
     ogg->limit = s->options.buffer.segment_bytes;
     ogg->io = (lnd_io){.vt = &lnd_ogg_http_io, .state = ogg, .size = s->response.content_length_bytes, .seekable = true};
     memcpy(ogg->etag, s->response.etag, sizeof ogg->etag);
-    lnd_ogg_range *range = lnd_ogg_http_range(ogg, 0);
-    if (!ogg->url || !range) {
+    if (full) ogg->body = &s->input;
+    lnd_ogg_range *range = full ? nullptr : lnd_ogg_http_range(ogg, 0);
+    if (!ogg->url || (!full && !range)) {
         lnd_http_ogg_free(s, ogg);
         return nullptr;
     }
-    range->size = LND_MIN(bytes, range->capacity);
-    memcpy(range->data, data, range->size);
+    if (range) {
+        range->size = LND_MIN(bytes, range->capacity);
+        memcpy(range->data, data, range->size);
+    }
     return ogg;
 }
 
 bool lnd_http_ogg_matches(const lnd_http_session *s, const lnd_http_ogg *ogg) {
-    return s->response.length_known && !s->info.live && !strcmp(s->request_url, ogg->url) && !strcmp(s->response.etag, ogg->etag) &&
+    return ogg->etag[0] == '"' && (!ogg->body || ogg->done) && s->response.length_known && !s->info.live && s->request_url &&
+           !strcmp(s->request_url, ogg->url) && !strcmp(s->response.etag, ogg->etag) &&
            (s->response.range ? s->response.total_length_bytes : s->response.content_length_bytes) == ogg->io.size;
 }
 
@@ -129,8 +143,16 @@ static int32_t lnd_ogg_http_duration(lnd_http_ogg *ogg, int64_t *duration_us) {
     return result;
 }
 
+bool lnd_http_ogg_collecting(const lnd_http_ogg *ogg) { return ogg && ogg->body && !ogg->done; }
+
+void lnd_http_ogg_end(lnd_http_ogg *ogg) {
+    if (!lnd_http_ogg_collecting(ogg)) return;
+    ogg->io.size = ogg->body->size;
+    ogg->complete = true;
+}
+
 bool lnd_http_ogg_step(lnd_http_session *s, lnd_http_ogg *ogg) {
-    if (ogg->done) return false;
+    if (ogg->done || (ogg->body && !ogg->complete)) return false;
     if (!ogg->transfer) {
         int64_t duration;
         int32_t result = lnd_ogg_http_duration(ogg, &duration);

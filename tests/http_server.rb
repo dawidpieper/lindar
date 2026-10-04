@@ -109,6 +109,9 @@ serve = lambda do |socket, origin|
         socket.write("#{chunk.bytesize.to_s(16)}\r\n#{chunk}\r\n")
       end
       socket.write("0\r\n\r\n")
+    when '/no-etag.opus'
+      raise 'Unexpected range without validator' if headers['range'] || headers['if-range']
+      response.call('200 OK', File.binread(File.join(samples, 'tone.opus')), {'Accept-Ranges' => 'bytes'})
     when '/large-file', '/no-file-cache', '/file-limit', '/bad-cache-dir'
       body = File.binread(File.join(samples, 'tone.aiff'))
       if path == '/large-file'

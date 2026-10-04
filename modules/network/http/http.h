@@ -132,6 +132,7 @@ int32_t lnd_http_poll(lnd_http_session *s, void *data, size_t capacity, size_t *
 void lnd_http_request_close(lnd_http_session *s);
 int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget);
 size_t lnd_http_protocol_buffered(const lnd_http_session *s);
+bool lnd_http_protocol_complete(const lnd_http_session *s);
 void lnd_http_protocol_free(lnd_http_session *s);
 int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live);
 int32_t lnd_http_decode(lnd_http_session *s);

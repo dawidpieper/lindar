@@ -135,6 +135,13 @@ static int32_t lnd_http_plain_playlist(lnd_http_session *s, lnd_http_protocol *p
     return lnd_http_request(s, url, false, 0, 0);
 }
 
+static void lnd_http_discard_probe(lnd_http_session *s, lnd_http_protocol *p) {
+    lnd_http_ogg_stop(s, p->ogg);
+    s->input.size -= s->input_offset;
+    memmove(s->input.data, s->input.data + s->input_offset, s->input.size);
+    s->input_offset = 0;
+}
+
 enum { LND_PROTOCOL_AGAIN = 3 };
 
 static int32_t lnd_http_drain(lnd_http_session *s, lnd_http_protocol *p) {
@@ -152,7 +159,7 @@ static int32_t lnd_http_drain(lnd_http_session *s, lnd_http_protocol *p) {
         s->input_offset += used;
         if (r < 0) return r;
     }
-    if (s->decoder_end || s->input_offset == s->input.size) s->input_offset = s->input.size = 0;
+    if (!lnd_http_ogg_collecting(p->ogg) && (s->decoder_end || s->input_offset == s->input.size)) s->input_offset = s->input.size = 0;
     if (p->transfer_state != LND_TRANSFER_RECEIVING && p->transfer_state != LND_TRANSFER_RECONNECT && !s->input.size && !s->input_end) {
         if (s->response.icy_interval_bytes && (s->icy_size || !s->icy_remaining)) return LND_ERR_FORMAT;
         s->input_end = true;
@@ -188,7 +195,7 @@ static int32_t lnd_http_drain(lnd_http_session *s, lnd_http_protocol *p) {
     if (p->transfer_state == LND_TRANSFER_RECONNECT && !s->input.size && consumed == lnd_decoder_consumed(s->decoder) && decoded == s->stats.decoded_frames &&
         (LND_DecoderGetStatus(s->decoder) == LND_SOURCE_WAITING || LND_DecoderGetStatus(s->decoder) == LND_SOURCE_EOF))
         return lnd_http_retry(s, p, LND_ERR_IO);
-    if (s->input.size) {
+    if (s->input_offset < s->input.size) {
         if (LND_DecoderGetBufferedBytes(s->decoder) == s->options.buffer.compressed_bytes && LND_DecoderGetStatus(s->decoder) == LND_SOURCE_WAITING)
             return LND_ERR_UNSUPPORTED;
         return LND_HTTP_PENDING;
@@ -327,23 +334,38 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
         if (p->content == LND_CONTENT_AUDIO) {
             int32_t r = lnd_http_drain(s, p);
             if (r == LND_PROTOCOL_AGAIN) continue;
-            if (r != LND_OK) return r;
+            if (r != LND_OK && (r != LND_HTTP_PENDING || !lnd_http_ogg_collecting(p->ogg))) return r;
         }
         if (p->transfer_state != LND_TRANSFER_RECEIVING) return LND_HTTP_PENDING;
         uint8_t data[16384];
         size_t written = 0;
-        int32_t status = lnd_http_poll(s, data, sizeof data, &written);
-        if (written > sizeof data) return LND_ERR_IO;
+        if (s->input.size > s->input.limit) return LND_ERR_OUT_OF_MEMORY;
+        size_t capacity = LND_MIN(sizeof data, s->input.limit - s->input.size);
+        bool peek = !capacity && lnd_http_ogg_collecting(p->ogg) && !s->response.length_known;
+        if (peek) {
+            if (!s->input_offset) {
+                lnd_http_ogg_stop(s, p->ogg);
+                continue;
+            }
+            capacity = 1;
+        }
+        int32_t status = lnd_http_poll(s, data, capacity, &written);
+        if (written > capacity) return LND_ERR_IO;
         if (s->response.headers_complete) {
             int32_t r = lnd_http_headers(s, p);
             if (r == LND_PROTOCOL_AGAIN) continue;
             if (r != LND_OK) return r;
         }
         if (written) {
+            if (peek) lnd_http_discard_probe(s, p);
             s->last_data = s->now;
             p->received += written;
             s->stats.received_bytes += written;
-            if (!lnd_http_bytes_append(&s->input, data, written)) return LND_ERR_OUT_OF_MEMORY;
+            if (!lnd_http_bytes_append(&s->input, data, written)) {
+                if (!lnd_http_ogg_collecting(p->ogg) || !s->input_offset) return LND_ERR_OUT_OF_MEMORY;
+                lnd_http_discard_probe(s, p);
+                if (!lnd_http_bytes_append(&s->input, data, written)) return LND_ERR_OUT_OF_MEMORY;
+            }
         }
         if (status < 0) {
             if (status != LND_ERR_IO || !s->info.live || p->content != LND_CONTENT_AUDIO) return lnd_http_retry(s, p, status);
@@ -355,6 +377,7 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
         }
         int32_t r = lnd_http_classify(s, p);
         if (r != LND_OK) return r;
+        if (p->transfer_state == LND_TRANSFER_COMPLETE) lnd_http_ogg_end(p->ogg);
         if (!written && status != LND_HTTP_DONE) {
             if (s->options.retry.receive_timeout_ms && s->now - s->last_data >= s->options.retry.receive_timeout_ms) return lnd_http_retry(s, p, LND_ERR_IO);
             return LND_HTTP_PENDING;
@@ -366,7 +389,7 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
 size_t lnd_http_protocol_buffered(const lnd_http_session *s) {
     const lnd_http_protocol *p = s->protocol;
     if (!p) return 0;
-    size_t bytes = lnd_http_ogg_buffered(p->ogg);
+    size_t bytes = lnd_http_ogg_collecting(p->ogg) ? s->input_offset : lnd_http_ogg_buffered(p->ogg);
 #if LND_HTTP_HLS
     bytes += lnd_hls_buffered(p->hls);
 #endif
@@ -374,6 +397,11 @@ size_t lnd_http_protocol_buffered(const lnd_http_session *s) {
     bytes += lnd_http_mp4_buffered(p->mp4);
 #endif
     return bytes;
+}
+
+bool lnd_http_protocol_complete(const lnd_http_session *s) {
+    const lnd_http_protocol *p = s->protocol;
+    return p && p->content == LND_CONTENT_AUDIO && p->transfer_state == LND_TRANSFER_COMPLETE;
 }
 
 void lnd_http_protocol_free(lnd_http_session *s) {
@@ -409,6 +437,12 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     bool mp4_tried = state->mp4_tried;
 #endif
     if (s->info.duration_us && time_us > s->info.duration_us) return LND_ERR_INVALID_ARG;
+    if (state->ogg && !lnd_http_ogg_matches(s, state->ogg)) {
+        lnd_http_ogg_free(s, state->ogg);
+        state->ogg = nullptr;
+        s->info.duration_us = s->info.seek_end_us = 0;
+        s->info.length_kind = LND_LENGTH_UNKNOWN;
+    }
     lnd_http_request_close(s);
     lnd_free(state->resume_url);
 #if LND_MODULE_HTTP_FILE

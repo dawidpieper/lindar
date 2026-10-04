@@ -25,15 +25,16 @@ static void play(const char *base, const char *path, const char *reference_path,
     if (!strcmp(path, "/bad-cache-dir")) options.file.directory = "lindar-missing-directory";
     if (!strcmp(path, "/icy")) options.content_mode = LND_HTTP_FINITE;
     options.buffer.start_ms = options.buffer.resume_ms = 0;
-    bool probe_duration = !strcmp(path, "/tone.opus") || !strcmp(path, "/tone.ogg");
+    bool probe_duration = !strcmp(path, "/tone.opus") || !strcmp(path, "/tone.ogg") || !strcmp(path, "/no-etag.opus") || !strcmp(path, "/chunked-opus");
     if (probe_duration) options.buffer.pcm_ms = 25;
     options.retry.delay_ms = 5;
     options.retry.attempts = 2;
     options.retry.receive_timeout_ms = 1000;
-    LND_HTTP_OPEN *open = LND_HttpOpen(url, &options);
-    CHECK(open != nullptr);
     size_t size = 0;
     uint8_t *file = reference_path ? read_file(reference_path, &size) : nullptr;
+    if (!strcmp(path, "/no-etag.opus")) options.buffer.segment_bytes = size;
+    LND_HTTP_OPEN *open = LND_HttpOpen(url, &options);
+    CHECK(open != nullptr);
     LND_SOURCE *reference = file ? LND_SourceCreateEncodedMemory(file, size, LND_ENCODED_SOURCE_LIGHTWEIGHT, nullptr) : nullptr;
     LND_SOURCE *source = nullptr;
     uint64_t deadline = lnd_time_ns() + 15000000000ull;
@@ -216,6 +217,7 @@ int main(int argc, char **argv) {
         play(argv[2], "/tone.wav", "audiosamples/tone.wav", argv[3], worker != 0, 0);
 #if LND_MODULE_OPUS_DECODER
         play(argv[1], "/tone.opus", "audiosamples/tone.opus", nullptr, worker != 0, 0);
+        play(argv[1], "/no-etag.opus", "audiosamples/tone.opus", nullptr, worker != 0, 0);
 #if LND_MODULE_METADATA_COMMENTS
         play(argv[1], "/comments.opus", "audiosamples/comments.opus", nullptr, worker != 0, 0);
 #endif

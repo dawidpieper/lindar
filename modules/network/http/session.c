@@ -841,7 +841,7 @@ int32_t LND_SourceGetHttpStats(const LND_SOURCE *source, LND_HTTP_STATS *stats) 
         stats->content_size_known = !s->info.hls && s->response.length_known;
         stats->content_bytes = s->response.range ? s->response.total_length_bytes : s->response.content_length_bytes;
         stats->range_start_bytes = s->response.range ? s->response.range_start_bytes : 0;
-        stats->download_complete = !s->info.live && s->input_end;
+        stats->download_complete = !s->info.live && (s->input_end || lnd_http_protocol_complete(s));
         lnd_spinlock_unlock(&s->pcm_lock);
     }
     lnd_http_leave();
