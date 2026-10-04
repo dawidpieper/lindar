@@ -14,7 +14,7 @@ typedef struct duration_server {
 typedef struct duration_transfer {
     duration_server *server;
     size_t start, end, position;
-    bool range, delayed;
+    bool range, delayed, matches;
     unsigned version;
 } duration_transfer;
 
@@ -28,7 +28,8 @@ static int32_t duration_open(void *user, const LND_HTTP_REQUEST *request, void *
     t->end = s->size;
     if (request->range) {
         s->ranges++;
-        if (!request->if_range || strcmp(request->if_range, s->version ? "\"changed\"" : "\"stable\"")) s->errors++;
+        if (!request->if_range || (strcmp(request->if_range, "\"changed\"") && strcmp(request->if_range, "\"stable\""))) s->errors++;
+        t->matches = request->if_range && !strcmp(request->if_range, s->version ? "\"changed\"" : "\"stable\"");
         if (s->mode != 2) {
             if (request->range_start_bytes >= s->size || request->range_length_bytes > s->size - request->range_start_bytes) {
                 free(t);
@@ -39,6 +40,10 @@ static int32_t duration_open(void *user, const LND_HTTP_REQUEST *request, void *
         }
     }
     if (request->flags & (LND_HTTP_PROBE_DURATION | LND_HTTP_NO_PROBE_DURATION)) s->errors++;
+    if (t->range && !t->matches) {
+        t->start = 0;
+        t->end = s->size;
+    }
     t->position = t->start;
     s->opens++;
     *out = t;
@@ -48,7 +53,7 @@ static int32_t duration_open(void *user, const LND_HTTP_REQUEST *request, void *
 static int32_t duration_poll(void *transfer, LND_HTTP_RESPONSE *response, void *data, size_t capacity, size_t *written) {
     duration_transfer *t = transfer;
     duration_server *s = t->server;
-    bool partial = t->range && s->mode != 2;
+    bool partial = t->range && t->matches && s->mode != 2;
     *written = 0;
     *response = (LND_HTTP_RESPONSE){.status = partial ? 206 : 200,
                                     .headers_complete = true,
@@ -186,6 +191,7 @@ static void test_duration(const uint8_t *data, size_t bytes, const char *codec, 
         server.version++;
         CHECK(LND_SourceSeekHttpMicroseconds(source, 0, &id) == LND_OK && id);
         CHECK(LND_HttpUpdate(clock + 14500, 1) == LND_OK);
+        if (!strcmp(codec, "opus")) CHECK(LND_HttpUpdate(clock + 14500, 1) == LND_OK);
         CHECK(LND_SourceGetHttpInfo(source, &info) == LND_OK && info.length_kind == LND_LENGTH_UNKNOWN);
         for (unsigned i = 0; i < 300; i++) CHECK(LND_HttpUpdate(clock + 14501 + i, budget) == LND_OK);
         int64_t next = c.next_us ? c.next_us : c.expected_us;

@@ -895,6 +895,9 @@ static int32_t lnd_http_seek(LND_SOURCE *source, int64_t position, bool live, ui
         if (result == LND_OK) {
             lnd_http_metadata_clear(s);
             s->metadata_clock = false;
+#if LND_THREADS
+            if (s->worker) lnd_event_signal(&lnd_http.event);
+#endif
             s->request_id++;
             if (id) *id = s->request_id;
             lnd_spinlock_lock(&s->pcm_lock);

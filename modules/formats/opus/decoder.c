@@ -39,10 +39,11 @@ static const OpusFileCallbacks lnd_opus_callbacks = {
 
 #if LND_MODULE_HTTP
 #include "formats/ogg/duration.h"
+#include "reader.h"
 
-int32_t lnd_opus_duration(lnd_io *io, int64_t *duration_us) {
-    OggOpusFile *file = op_open_callbacks(io, &lnd_opus_callbacks, nullptr, 0, nullptr);
-    if (!file) return LND_ERR_FORMAT;
+OggOpusFile *lnd_opus_open_io(lnd_io *io) { return op_open_callbacks(io, &lnd_opus_callbacks, nullptr, 0, nullptr); }
+
+int32_t lnd_opus_io_duration(lnd_io *io, OggOpusFile *file, int64_t *duration_us) {
     ogg_int64_t frames = op_pcm_total(file, -1);
     uint64_t end = 0;
     bool valid = true;
@@ -54,11 +55,18 @@ int32_t lnd_opus_duration(lnd_io *io, int64_t *duration_us) {
             valid = lnd_ogg_duration_end(io, end, (int32_t)op_serialno(file, link));
         }
     }
-    op_free(file);
     uint64_t fraction = frames >= 0 ? (uint64_t)(frames % 48000) * 1000000 / 48000 : 0;
     if (!valid || end != io->size || frames < 0 || (uint64_t)(frames / 48000) > ((uint64_t)INT64_MAX - fraction) / 1000000) return LND_ERR_FORMAT;
     *duration_us = frames / 48000 * 1000000 + (int64_t)fraction;
     return LND_OK;
+}
+
+int32_t lnd_opus_duration(lnd_io *io, int64_t *duration_us) {
+    OggOpusFile *file = lnd_opus_open_io(io);
+    if (!file) return LND_ERR_FORMAT;
+    int32_t result = lnd_opus_io_duration(io, file, duration_us);
+    op_free(file);
+    return result;
 }
 #endif
 

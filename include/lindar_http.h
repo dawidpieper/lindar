@@ -92,7 +92,7 @@ typedef struct LND_HTTP_BUFFER_OPTIONS {
     uint32_t resume_ms; /**< Decoded audio required after a stall. */
     uint32_t pcm_ms; /**< Decoded PCM queue capacity in milliseconds. */
     size_t compressed_bytes; /**< Compressed decoder input capacity in bytes. */
-    size_t segment_bytes; /**< Maximum segment or duration cache size in bytes; also limits complete Ogg responses. */
+    size_t segment_bytes; /**< Maximum segment or Ogg cache size in bytes; also limits complete Ogg responses. */
     size_t playlist_bytes; /**< Maximum downloaded playlist size in bytes. */
     uint32_t playlist_entries; /**< Maximum parsed playlist entries. */
     uint32_t event_count; /**< Maximum queued HTTP events. */
@@ -294,7 +294,9 @@ LND_API int32_t LND_SourceGetHttpStats(const LND_SOURCE *source, LND_HTTP_STATS 
 LND_API int32_t LND_SourcePollHttpEvent(LND_SOURCE *source, LND_HTTP_EVENT *event);
 
 /** Request source seek to absolute position_us and optionally write request_id.
- * HLS seeks are limited to the advertised DVR window; MP4 range seeks are asynchronous.
+ * HLS seeks are limited to the advertised DVR window. Opus and MP4 range seeks are asynchronous.
+ * Native Opus ranges require known size, range support and a matching strong ETag; other resources decode from the start.
+ * Duration probing flags do not affect range seeking.
  *
  * @param source Source to operate on.
  * @param position_us Absolute media position in microseconds.

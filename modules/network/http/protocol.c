@@ -195,11 +195,13 @@ static int32_t lnd_http_drain(lnd_http_session *s, lnd_http_protocol *p) {
     if (p->transfer_state == LND_TRANSFER_RECONNECT && !s->input.size && consumed == lnd_decoder_consumed(s->decoder) && decoded == s->stats.decoded_frames &&
         (LND_DecoderGetStatus(s->decoder) == LND_SOURCE_WAITING || LND_DecoderGetStatus(s->decoder) == LND_SOURCE_EOF))
         return lnd_http_retry(s, p, LND_ERR_IO);
+    bool progress = consumed != lnd_decoder_consumed(s->decoder) || decoded != s->stats.decoded_frames;
     if (s->input_offset < s->input.size) {
         if (LND_DecoderGetBufferedBytes(s->decoder) == s->options.buffer.compressed_bytes && LND_DecoderGetStatus(s->decoder) == LND_SOURCE_WAITING)
             return LND_ERR_UNSUPPORTED;
-        return LND_HTTP_PENDING;
+        return progress ? LND_PROTOCOL_AGAIN : LND_HTTP_PENDING;
     }
+    if (progress && (p->transfer_state != LND_TRANSFER_RECEIVING || LND_DecoderGetStatus(s->decoder) == LND_SOURCE_READY)) return LND_PROTOCOL_AGAIN;
 
     return LND_OK;
 }
@@ -321,6 +323,28 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
         s->input_end = s->decoder_end = false;
     }
 #endif
+    if (lnd_http_ogg_playing(p->ogg)) {
+        int32_t result = lnd_http_ogg_play(s, p->ogg, budget);
+        if (result != LND_ERR_UNSUPPORTED) return result;
+        bool commit = s->seek_commit;
+        uint64_t played = lnd_load(&s->played);
+        int64_t target = commit ? s->seek_target_us
+                                : (int64_t)(played / s->info.sample_rate_hz * 1000000 +
+                                            (played % s->info.sample_rate_hz * 1000000 + s->info.sample_rate_hz - 1) / s->info.sample_rate_hz);
+        lnd_spinlock_lock(&s->pcm_lock);
+        s->head = s->count = 0;
+        s->buffering = true;
+        lnd_spinlock_unlock(&s->pcm_lock);
+        lnd_http_metadata_clear(s);
+        s->metadata_clock = false;
+        lnd_http_ogg_free(s, p->ogg);
+        p->ogg = nullptr;
+        s->info.duration_us = s->info.seek_end_us = 0;
+        s->info.length_kind = LND_LENGTH_UNKNOWN;
+        result = lnd_http_protocol_seek(s, target, false);
+        s->seek_commit = commit;
+        return result == LND_OK ? LND_HTTP_PENDING : result;
+    }
     if (!s->transfer && p->transfer_state == LND_TRANSFER_RECEIVING) {
         if (s->now < s->retry_at) return LND_HTTP_PENDING;
         int32_t r = lnd_http_request(s, p->resume_url ? p->resume_url : s->url, p->range, p->range_start_bytes, 0);
@@ -437,7 +461,8 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     bool mp4_tried = state->mp4_tried;
 #endif
     if (s->info.duration_us && time_us > s->info.duration_us) return LND_ERR_INVALID_ARG;
-    if (state->ogg && !lnd_http_ogg_matches(s, state->ogg)) {
+    bool ogg_seek = lnd_http_ogg_seek(s, state->ogg, time_us) == LND_OK;
+    if (!ogg_seek && state->ogg && !lnd_http_ogg_matches(s, state->ogg)) {
         lnd_http_ogg_free(s, state->ogg);
         state->ogg = nullptr;
         s->info.duration_us = s->info.seek_end_us = 0;
@@ -454,13 +479,13 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     state->mp4_tried = mp4_tried;
 #endif
     *s->if_range = 0;
-    lnd_decoder_reset(s->decoder);
+    if (!ogg_seek) lnd_decoder_reset(s->decoder);
     if (s->resampler) lnd_resample_source_reset(s->resampler);
     lnd_store(&s->decode_source.status, LND_SOURCE_WAITING);
     s->decode_source.pos = 0;
     s->input.size = s->input_offset = 0;
     s->input_end = s->decoder_end = s->finished = false;
-    s->discard_us = time_us;
+    s->discard_us = ogg_seek ? 0 : time_us;
     s->discard_frames = 0;
     s->seek_target_us = time_us;
     s->seek_commit = true;

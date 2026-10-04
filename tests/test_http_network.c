@@ -123,15 +123,16 @@ static void play(const char *base, const char *path, const char *reference_path,
         CHECK(LND_SourceGetHttpStats(source, &stats) == LND_OK);
         CHECK(stats.file_bytes > 8 * 1024 * 1024 && stats.buffered_bytes < 65536);
     }
-    if (!strcmp(path, "/large.m4a") && source && reference) {
+    bool opus_seek = !strcmp(path, "/tone.opus");
+    if ((!strcmp(path, "/large.m4a") || opus_seek) && source && reference) {
         for (unsigned seek = 0; seek < 2; seek++) {
             int64_t target = seek ? 0 : 1000000;
             uint64_t id = 0;
             CHECK(LND_SourceSeekHttpMicroseconds(source, target, &id) == LND_OK && id);
-            CHECK(LND_SourceSeekFrames(reference, 0) == LND_OK);
+            CHECK(LND_SourceSeekFrames(reference, opus_seek ? (uint64_t)target * 48000 / 1000000 : 0) == LND_OK);
             uint32_t sample_rate_hz = LND_SourceGetSampleRateHz(source), channels = LND_SourceGetChannels(source);
             int16_t actual[1024], expected[1024];
-            for (uint64_t left = (uint64_t)target * sample_rate_hz / 1000000; left;) {
+            for (uint64_t left = opus_seek ? 0 : (uint64_t)target * sample_rate_hz / 1000000; left;) {
                 uint64_t take = left < 512 ? left : 512;
                 CHECK(LND_SourceRead(reference, expected, LND_FORMAT_S16, take) == take);
                 left -= take;
@@ -153,7 +154,7 @@ static void play(const char *base, const char *path, const char *reference_path,
                 if (!got) lnd_sleep_ms(1);
             }
             printf("seek=%u max_delta=%u mean_square=%.6f\n", seek, max_delta, got_total ? (double)square_error / (got_total * channels) : 0);
-            CHECK(max_delta <= (seek ? 0u : 16u));
+            CHECK(max_delta <= (seek || opus_seek ? 0u : 16u));
             CHECK(square_error <= got_total * channels * 4);
             CHECK(got_total == total - (uint64_t)target * sample_rate_hz / 1000000);
         }

@@ -294,6 +294,14 @@ void lnd_decoder_reset(LND_DECODER *d) {
     d->end = d->buffered = d->packet_mode = false;
 }
 
+void lnd_decoder_attach(LND_DECODER *d, const LND_CODEC *codec, void *state, const LND_CODEC_INFO *info) {
+    lnd_decoder_reset(d);
+    d->codec = codec;
+    d->state = state;
+    d->info = *info;
+    d->status = LND_SOURCE_WAITING;
+}
+
 int32_t lnd_decoder_configure(LND_DECODER *d, const LND_CODEC_STREAM_CONFIG *config) {
     if (!d || !config || !config->codec || (!config->data && config->bytes) || config->bytes > sizeof d->packet_config ||
         strlen(config->codec) >= sizeof d->packet_codec)
