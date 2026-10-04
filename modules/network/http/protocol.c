@@ -388,6 +388,7 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     if (!state || !s->info.seekable || live || s->info.live || s->cancelled) return LND_ERR_UNSUPPORTED;
 #if LND_HTTP_MP4
     if (state->mp4) return lnd_http_mp4_seek(s, state->mp4, time_us);
+    bool mp4_tried = state->mp4_tried;
 #endif
     if (s->info.duration_us && time_us > s->info.duration_us) return LND_ERR_INVALID_ARG;
     lnd_http_request_close(s);
@@ -397,6 +398,9 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     s->stats.file_bytes = 0;
 #endif
     *state = (lnd_http_protocol){0};
+#if LND_HTTP_MP4
+    state->mp4_tried = mp4_tried;
+#endif
     *s->if_range = 0;
     lnd_decoder_reset(s->decoder);
     if (s->resampler) lnd_resample_source_reset(s->resampler);
