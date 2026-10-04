@@ -60,6 +60,7 @@ typedef struct lnd_http_session {
     void *transport_user;
     bool transport_owned;
     void *protocol;
+    struct lnd_http_cache *cache;
     lnd_http_bytes input;
     size_t input_offset;
     float *ring;
@@ -133,9 +134,11 @@ void lnd_http_request_close(lnd_http_session *s);
 int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget);
 size_t lnd_http_protocol_buffered(const lnd_http_session *s);
 bool lnd_http_protocol_complete(const lnd_http_session *s);
+void lnd_http_protocol_cache_info(lnd_http_session *s, LND_HTTP_INFO *info);
 void lnd_http_protocol_free(lnd_http_session *s);
 int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live);
 int32_t lnd_http_decode(lnd_http_session *s);
+void lnd_http_decoder_duration(lnd_http_session *s, const LND_CODEC_INFO *info);
 int32_t lnd_http_feed(lnd_http_session *s, const uint8_t *data, size_t bytes, size_t *used);
 
 void lnd_http_metadata_clear(lnd_http_session *s);

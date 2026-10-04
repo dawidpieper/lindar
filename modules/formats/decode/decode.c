@@ -375,6 +375,54 @@ int32_t LND_DecoderTakeIo(LND_DECODER *d, LND_IO *io) {
     return LND_OK;
 }
 
+int32_t lnd_decoder_info_io(LND_DECODER *d, LND_IO *io, LND_CODEC_INFO *info) {
+    const LND_CODEC *codec = nullptr;
+    void *state = nullptr;
+    int32_t result = lnd_codec_open_candidates(io, d->candidates, d->count, d->forced, nullptr, &codec, info, &state);
+    if (result == LND_OK) {
+        lnd_callback_enter();
+        codec->close(state);
+        lnd_callback_leave();
+    }
+    return result;
+}
+
+int32_t lnd_decoder_seek_io(LND_DECODER *d, LND_IO *io, int64_t time_us, bool *seeked) {
+    const LND_CODEC *codec = nullptr;
+    LND_CODEC_INFO info;
+    void *state = nullptr;
+    int32_t result = lnd_codec_open_candidates(io, d->candidates, d->count, d->forced, nullptr, &codec, &info, &state);
+    if (result != LND_OK) return result;
+    bool valid =
+        info.sample_rate_hz && info.sample_rate_hz <= 768000 && info.channels && info.channels <= LND_MAX_CHANNELS && LND_PcmGetSampleBytes(info.format);
+    uint64_t us = (uint64_t)time_us;
+    uint64_t frame = valid ? us / 1000000 * info.sample_rate_hz + us % 1000000 * info.sample_rate_hz / 1000000 : 0;
+    bool eof = (info.length_known || info.length_frames) && !info.length_estimated && frame >= info.length_frames;
+    *seeked = !frame || eof;
+    if (valid && frame && !eof && codec->seek && info.seekable) {
+        lnd_callback_enter();
+        result = codec->seek(state, frame);
+        lnd_callback_leave();
+        *seeked = result == LND_OK;
+    }
+    void *scratch = valid && result == LND_OK ? lnd_alloc((size_t)d->block * info.channels * LND_PcmGetSampleBytes(info.format)) : nullptr;
+    if (!scratch) {
+        lnd_callback_enter();
+        codec->close(state);
+        lnd_callback_leave();
+        return !valid ? LND_ERR_FORMAT : result != LND_OK ? result : LND_ERR_OUT_OF_MEMORY;
+    }
+    lnd_decoder_reset(d);
+    d->codec = codec;
+    d->state = state;
+    d->info = info;
+    d->io = io;
+    d->scratch = scratch;
+    d->buffered = d->end = true;
+    d->status = eof ? LND_SOURCE_EOF : LND_SOURCE_READY;
+    return LND_OK;
+}
+
 int32_t LND_DecoderLoadMetadata(LND_DECODER *d) {
     if (!d) return LND_ERR_INVALID_ARG;
     if (!d->state) return LND_METADATA_ERR_NOT_FOUND;

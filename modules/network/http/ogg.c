@@ -1,4 +1,5 @@
 #include "ogg.h"
+#include "cache.h"
 #include "formats/ogg/duration.h"
 #include "formats/decode/metadata.h"
 #if LND_MODULE_OPUS_DECODER
@@ -31,6 +32,10 @@ struct lnd_http_ogg {
     lnd_decode_tags tags;
     void *pcm;
     uint64_t frame;
+    uint64_t cache_revision;
+    int64_t cached_seek_us;
+    bool cache_candidate;
+    bool cache_ready;
     uint64_t epoch;
     uint32_t channels;
     int link;
@@ -103,6 +108,9 @@ static int64_t lnd_ogg_http_read(void *state, uint64_t position, void *dst, size
         return (int64_t)take;
     }
     if (position >= ogg->io.size) return 0;
+    size_t cached = ogg->session ? lnd_http_cache_read(ogg->session->cache, position, dst, bytes) : 0;
+    if (cached) return (int64_t)cached;
+    if (ogg->opening || !ogg->cache_ready) ogg->cache_candidate = false;
     if (ogg->miss) return LND_ERR_IO;
     uint64_t offset = position / ogg->chunk * ogg->chunk;
     for (lnd_ogg_range *range = ogg->ranges; range; range = range->next) {
@@ -126,16 +134,18 @@ lnd_http_ogg *lnd_http_ogg_begin(lnd_http_session *s, const uint8_t *data, size_
         (s->response.length_known && (!s->response.content_length_bytes || s->response.content_length_bytes > INT64_MAX)))
         return nullptr;
     bool full = !s->response.length_known || !s->response.accepts_ranges || s->response.etag[0] != '"';
-    if (full && !s->probe_duration) return nullptr;
+    if (full && (!s->probe_duration || s->cache)) return nullptr;
     if (full && s->response.length_known && s->response.content_length_bytes > s->options.buffer.segment_bytes) return nullptr;
 #if !LND_MODULE_OPUS_DECODER && !LND_MODULE_VORBIS_DECODER
     return nullptr;
 #endif
     lnd_http_ogg *ogg = lnd_alloc_zero(sizeof *ogg);
     if (!ogg) return nullptr;
+    ogg->session = s;
     ogg->done = !s->probe_duration;
     ogg->epoch = 1;
     ogg->link = -1;
+    ogg->cached_seek_us = -1;
     ogg->url = lnd_http_copy(s->request_url);
     ogg->chunk = LND_MIN((size_t)65536, s->options.buffer.segment_bytes);
     ogg->limit = s->options.buffer.segment_bytes;
@@ -152,6 +162,25 @@ lnd_http_ogg *lnd_http_ogg_begin(lnd_http_session *s, const uint8_t *data, size_
         memcpy(range->data, data, range->size);
     }
     return ogg;
+}
+
+lnd_http_ogg *lnd_http_ogg_cached(lnd_http_session *s) {
+#if LND_MODULE_OPUS_DECODER
+    if (!lnd_http_cache_complete(s->cache) || strcmp(s->info.codec, "opus")) return nullptr;
+    lnd_http_ogg *ogg = lnd_alloc_zero(sizeof *ogg);
+    if (!ogg) return nullptr;
+    ogg->session = s;
+    ogg->done = true;
+    ogg->epoch = 1;
+    ogg->link = -1;
+    ogg->cached_seek_us = -1;
+    ogg->chunk = LND_MIN((size_t)65536, s->options.buffer.segment_bytes);
+    ogg->limit = s->options.buffer.segment_bytes;
+    ogg->io = (lnd_io){.vt = &lnd_ogg_http_io, .state = ogg, .size = lnd_http_cache_size(s->cache), .seekable = true};
+    return ogg;
+#else
+    return nullptr;
+#endif
 }
 
 bool lnd_http_ogg_matches(const lnd_http_session *s, const lnd_http_ogg *ogg) {
@@ -193,6 +222,14 @@ static int32_t lnd_ogg_http_fetch(lnd_http_session *s, lnd_http_ogg *ogg) {
         ogg->pending = lnd_ogg_http_range(ogg, ogg->missing);
         if (!ogg->pending) return LND_ERR_UNSUPPORTED;
         ogg->requested = ogg->pending->offset + ogg->pending->size;
+        size_t remaining = ogg->pending->capacity - ogg->pending->size;
+        if (lnd_http_cache_has(s->cache, ogg->requested, remaining)) {
+            ogg->pending->size += lnd_http_cache_read(s->cache, ogg->requested, ogg->pending->data + ogg->pending->size, remaining);
+            ogg->pending = nullptr;
+            ogg->miss = false;
+            ogg->io.status = LND_OK;
+            return LND_OK;
+        }
         int32_t result = lnd_http_request_open(s, ogg->url, ogg->etag, true, ogg->requested, ogg->pending->capacity - ogg->pending->size, &ogg->transfer);
         ogg->last_data = s->now;
         return result;
@@ -204,6 +241,7 @@ static int32_t lnd_ogg_http_fetch(lnd_http_session *s, lnd_http_ogg *ogg) {
     int32_t result = s->transport->poll(ogg->transfer, &response, data, sizeof data, &written);
     lnd_callback_leave();
     lnd_ogg_range *range = ogg->pending;
+    if (!range) return LND_ERR_UNSUPPORTED;
     bool valid = response.headers_complete && response.status == 206 && response.range && !strcmp(response.etag, ogg->etag) &&
                  response.range_start_bytes == ogg->requested && response.total_length_bytes == ogg->io.size &&
                  (!response.length_known || response.content_length_bytes == range->offset + range->capacity - ogg->requested);
@@ -211,6 +249,7 @@ static int32_t lnd_ogg_http_fetch(lnd_http_session *s, lnd_http_ogg *ogg) {
         (result == LND_HTTP_DONE && !valid))
         return LND_ERR_UNSUPPORTED;
     if (written) {
+        lnd_http_cache_put(s->cache, range->offset + range->size, data, written);
         memcpy(range->data + range->size, data, written);
         range->size += written;
         s->stats.received_bytes += written;
@@ -218,6 +257,7 @@ static int32_t lnd_ogg_http_fetch(lnd_http_session *s, lnd_http_ogg *ogg) {
     }
     if (result == LND_HTTP_DONE) {
         if (range->size != range->capacity) return LND_ERR_UNSUPPORTED;
+        lnd_http_cache_end(s->cache, ogg->io.size);
         lnd_ogg_http_close(s, ogg);
         ogg->miss = false;
         ogg->io.status = LND_OK;
@@ -318,6 +358,8 @@ static int32_t lnd_ogg_reader_step(void *state, const uint8_t *data, size_t byte
             info->length_frames = (uint64_t)op_pcm_total(ogg->reader, -1);
             info->length_known = info->seekable = true;
             if (ogg->frame >= info->length_frames) {
+                ogg->cache_ready = true;
+                ogg->cache_revision = lnd_http_cache_revision(ogg->session->cache);
                 ogg->session->input_end = true;
                 return LND_SOURCE_EOF;
             }
@@ -326,10 +368,14 @@ static int32_t lnd_ogg_reader_step(void *state, const uint8_t *data, size_t byte
                 ogg->failed = true;
                 return LND_SOURCE_WAITING;
             }
+            ogg->opening = true;
             if (op_pcm_seek(ogg->reader, (ogg_int64_t)ogg->frame)) {
                 op_free(ogg->reader);
                 ogg->reader = nullptr;
             }
+            ogg->opening = false;
+            ogg->cache_revision = lnd_http_cache_revision(ogg->session->cache);
+            if (!ogg->cache_candidate) ogg->cached_seek_us = -1;
         }
         if (!ogg->reader) {
             ogg->failed = !ogg->miss;
@@ -346,6 +392,8 @@ static int32_t lnd_ogg_reader_step(void *state, const uint8_t *data, size_t byte
         info->channels = (uint32_t)op_channel_count(ogg->reader, link);
         lnd_ogg_reader_tags(ogg, link);
         *pcm = (LND_PCM){.data = ogg->pcm, .frames = (size_t)got, .channels = info->channels, .format = info->format, .layout = LND_LAYOUT_INTERLEAVED};
+        ogg->cache_ready = true;
+        ogg->cache_revision = lnd_http_cache_revision(ogg->session->cache);
         ogg->frame += (uint32_t)got;
         ogg->epoch++;
     }
@@ -374,11 +422,17 @@ int32_t lnd_http_ogg_seek(lnd_http_session *s, lnd_http_ogg *ogg, int64_t time_u
     lnd_http_request_close(s);
     ogg->frame = (uint64_t)time_us / 1000000 * 48000 + (uint64_t)time_us % 1000000 * 48000 / 1000000;
     ogg->epoch++;
+    ogg->cache_candidate = s->cache != nullptr;
+    ogg->cache_ready = false;
+    ogg->cached_seek_us = time_us;
     ogg->missing = 0;
-    lnd_ogg_range *range = lnd_ogg_http_range(ogg, 0);
-    if (!range) return LND_ERR_UNSUPPORTED;
-    range->size = 0;
-    ogg->miss = true;
+    ogg->miss = false;
+    if (!lnd_http_cache_complete(s->cache)) {
+        lnd_ogg_range *range = lnd_ogg_http_range(ogg, 0);
+        if (!range) return LND_ERR_UNSUPPORTED;
+        range->size = 0;
+        ogg->miss = !lnd_http_cache_has(s->cache, 0, range->capacity);
+    }
     ogg->session = s;
     LND_CODEC_INFO info = s->format;
     info.sample_rate_hz = 48000;
@@ -404,7 +458,33 @@ int32_t lnd_http_ogg_play(lnd_http_session *s, lnd_http_ogg *ogg, uint32_t budge
         if (result < 0) return result;
         if (ogg->failed) return LND_ERR_UNSUPPORTED;
         if (s->finished) return LND_HTTP_DONE;
-        if (!ogg->miss && decoded == s->stats.decoded_frames) return LND_HTTP_PENDING;
+        if (!ogg->miss && decoded == s->stats.decoded_frames) {
+#if LND_MODULE_OPUS_DECODER
+            uint64_t offset = ogg->io.pos, bytes = 0;
+            if (lnd_http_cache_pending(s)) {
+                offset = 0;
+                bytes = ogg->io.size;
+            } else if (s->cache && ogg->reader) {
+                if (!s->options.cache.ahead_ms)
+                    bytes = ogg->io.size - offset;
+                else {
+                    uint64_t frames = (uint64_t)op_pcm_total(ogg->reader, -1);
+                    uint64_t played = lnd_load(&s->played);
+                    uint64_t target = played / s->info.sample_rate_hz * 48000 + played % s->info.sample_rate_hz * 48000 / s->info.sample_rate_hz +
+                                      (uint64_t)s->options.cache.ahead_ms * 48;
+                    if (frames && target > ogg->frame) {
+                        uint64_t end = (uint64_t)LND_MIN((long double)ogg->io.size, (long double)ogg->io.size * target / frames);
+                        if (end > offset) bytes = end - offset;
+                    }
+                }
+                lnd_http_cache_protect(s->cache, offset > 65536 ? offset - 65536 : 0, offset + LND_MIN(bytes, ogg->io.size - offset));
+            }
+            int32_t r = bytes ? lnd_http_cache_step(s, offset, bytes) : LND_HTTP_PENDING;
+            if (r != LND_OK) return r;
+#else
+            return LND_HTTP_PENDING;
+#endif
+        }
     }
     return LND_HTTP_PENDING;
 }
@@ -414,6 +494,15 @@ size_t lnd_http_ogg_buffered(const lnd_http_ogg *ogg) {
     if (ogg)
         for (lnd_ogg_range *range = ogg->ranges; range; range = range->next) bytes += range->size;
     return bytes;
+}
+
+void lnd_http_ogg_cache_info(lnd_http_session *s, const lnd_http_ogg *ogg, LND_HTTP_INFO *info) {
+    if (!s->cache || !s->info.sample_rate_hz || !ogg || !ogg->cache_ready || !ogg->cache_candidate || ogg->cached_seek_us < 0 ||
+        ogg->cache_revision != lnd_http_cache_revision(s->cache))
+        return;
+    uint64_t played = lnd_load(&s->played);
+    int64_t position = (int64_t)(played / s->info.sample_rate_hz * 1000000 + played % s->info.sample_rate_hz * 1000000 / s->info.sample_rate_hz);
+    if (position == ogg->cached_seek_us) info->cached_seek_start_us = info->cached_seek_end_us = position;
 }
 
 void lnd_http_ogg_stop(lnd_http_session *s, lnd_http_ogg *ogg) {

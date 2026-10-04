@@ -4,7 +4,7 @@
 #include "src/thread.h"
 #include "lindar_metadata.h"
 
-static void play(const char *base, const char *path, const char *reference_path, const char *ca, bool worker, int32_t error) {
+static void play_mode(const char *base, const char *path, const char *reference_path, const char *ca, bool worker, int32_t error, bool cache) {
     char url[4096];
     snprintf(url, sizeof url, "%s%s", base, path);
     LND_HTTP_OPTIONS options;
@@ -13,6 +13,7 @@ static void play(const char *base, const char *path, const char *reference_path,
     options.headers = headers;
     options.header_count = 2;
     options.execution = worker ? LND_HTTP_EXEC_WORKER : LND_HTTP_EXEC_MANUAL;
+    if (cache) options.cache.max_bytes = 32 * 1024 * 1024;
     options.ca_file = ca;
     if (!strcmp(path, "/ua")) options.transport = LND_HttpCurlGetTransport();
     if (!strcmp(path, "/ua")) options.user_agent = "LindarTest/2";
@@ -123,6 +124,12 @@ static void play(const char *base, const char *path, const char *reference_path,
         CHECK(LND_SourceGetHttpStats(source, &stats) == LND_OK);
         CHECK(stats.file_bytes > 8 * 1024 * 1024 && stats.buffered_bytes < 65536);
     }
+    LND_HTTP_STATS cached_stats;
+    if (cache && source) {
+        CHECK(LND_SourceGetHttpStats(source, &cached_stats) == LND_OK);
+        LND_HTTP_INFO cached_info;
+        CHECK(LND_SourceGetHttpInfo(source, &cached_info) == LND_OK && cached_info.cache_complete);
+    }
     bool opus_seek = !strcmp(path, "/tone.opus");
     if ((!strcmp(path, "/large.m4a") || opus_seek) && source && reference) {
         for (unsigned seek = 0; seek < 2; seek++) {
@@ -161,11 +168,20 @@ static void play(const char *base, const char *path, const char *reference_path,
         LND_HTTP_STATS stats;
         CHECK(LND_SourceGetHttpStats(source, &stats) == LND_OK && stats.received_bytes < 1024 * 1024);
     }
+    if (cache && source) {
+        LND_HTTP_STATS stats;
+        CHECK(LND_SourceGetHttpStats(source, &stats) == LND_OK && stats.requests == cached_stats.requests);
+        CHECK(stats.cache_bytes <= options.cache.max_bytes);
+    }
     if (source) LND_SourceFree(source);
     if (reference) LND_SourceFree(reference);
     LND_HttpOpenFree(open);
     LND_HttpUpdate(lnd_time_ns() / 1000000, 1);
     free(file);
+}
+
+static void play(const char *base, const char *path, const char *reference_path, const char *ca, bool worker, int32_t error) {
+    play_mode(base, path, reference_path, ca, worker, error, false);
 }
 
 static void test_blocking(const char *base, bool worker) {
@@ -202,6 +218,7 @@ int main(int argc, char **argv) {
     for (unsigned worker = 0; worker < 2; worker++) {
         test_blocking(argv[1], worker != 0);
         play(argv[1], "/tone.wav", "audiosamples/tone.wav", nullptr, worker != 0, 0);
+        play_mode(argv[1], "/tone.wav", "audiosamples/tone.wav", nullptr, worker != 0, 0, true);
         play(argv[1], "/icy", "audiosamples/tone.mp3", nullptr, worker != 0, 0);
         play(argv[1], "/chunked", "audiosamples/tone.mp3", nullptr, worker != 0, 0);
         play(argv[1], "/ua", "audiosamples/tone.wav", nullptr, worker != 0, 0);
@@ -218,6 +235,7 @@ int main(int argc, char **argv) {
         play(argv[2], "/tone.wav", "audiosamples/tone.wav", argv[3], worker != 0, 0);
 #if LND_MODULE_OPUS_DECODER
         play(argv[1], "/tone.opus", "audiosamples/tone.opus", nullptr, worker != 0, 0);
+        play_mode(argv[1], "/tone.opus", "audiosamples/tone.opus", nullptr, worker != 0, 0, true);
         play(argv[1], "/no-etag.opus", "audiosamples/tone.opus", nullptr, worker != 0, 0);
 #if LND_MODULE_METADATA_COMMENTS
         play(argv[1], "/comments.opus", "audiosamples/comments.opus", nullptr, worker != 0, 0);

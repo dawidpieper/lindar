@@ -1,5 +1,6 @@
 #include "network/http/http.h"
 #include "mp4.h"
+#include "network/http/cache.h"
 #include "formats/mp4/read.h"
 #include "network/http/http_packets/packets.h"
 #include <string.h>
@@ -15,6 +16,8 @@ struct lnd_http_mp4 {
     uint64_t requested;
     uint64_t count;
     uint64_t index;
+    uint64_t prefetch;
+    bool changed;
     uint64_t retry_at;
     size_t packet_at;
     uint32_t boxes;
@@ -41,6 +44,18 @@ static int32_t lnd_mp4_http_retry(lnd_http_session *s, lnd_http_mp4 *m, int32_t 
 static int32_t lnd_mp4_http_ensure(lnd_http_session *s, lnd_http_mp4 *m, uint64_t offset, size_t bytes) {
     if (offset > m->length || bytes > m->length - offset || bytes > m->cache.limit) return LND_ERR_FORMAT;
     if (offset >= m->base && offset - m->base <= m->cache.size && bytes <= m->cache.size - (size_t)(offset - m->base)) return LND_OK;
+    if (lnd_http_cache_has(s->cache, offset, bytes)) {
+        m->base = offset;
+        m->cache.size = 0;
+        m->pending = false;
+        lnd_http_request_close(s);
+        uint8_t data[16384];
+        while (m->cache.size < bytes) {
+            size_t take = lnd_http_cache_read(s->cache, offset + m->cache.size, data, LND_MIN(sizeof data, bytes - m->cache.size));
+            if (!take || !lnd_http_bytes_append(&m->cache, data, take)) return LND_ERR_OUT_OF_MEMORY;
+        }
+        return LND_OK;
+    }
     if (s->now < m->retry_at) return LND_HTTP_PENDING;
     if (!m->pending || offset < m->base || offset - m->base > m->requested || bytes > m->requested - (offset - m->base)) {
         m->base = offset;
@@ -56,10 +71,16 @@ static int32_t lnd_mp4_http_ensure(lnd_http_session *s, lnd_http_mp4 *m, uint64_
     if (written > sizeof data) return LND_ERR_IO;
     if (s->response.headers_complete &&
         (s->response.status != 206 || !s->response.range || s->response.range_start_bytes != m->base || s->response.total_length_bytes != m->length ||
-         strcmp(s->response.etag, s->if_range) || (s->response.length_known && s->response.content_length_bytes != m->requested)))
+         strcmp(s->response.etag, s->if_range) || (s->response.length_known && s->response.content_length_bytes != m->requested))) {
+        if (s->cache) {
+            m->changed = true;
+            return LND_ERR_UNSUPPORTED;
+        }
         return lnd_mp4_http_retry(s, m, LND_ERR_IO);
+    }
     if (written) {
         if (!s->response.headers_complete || written > m->requested - m->cache.size) return LND_ERR_IO;
+        lnd_http_cache_put(s->cache, m->base + m->cache.size, data, written);
         if (!lnd_http_bytes_append(&m->cache, data, written)) return LND_ERR_OUT_OF_MEMORY;
         s->stats.received_bytes += written;
         s->last_data = s->now;
@@ -67,6 +88,7 @@ static int32_t lnd_mp4_http_ensure(lnd_http_session *s, lnd_http_mp4 *m, uint64_
     if (r < 0) return lnd_mp4_http_retry(s, m, r);
     if (r == LND_HTTP_DONE) {
         if (m->cache.size != m->requested) return lnd_mp4_http_retry(s, m, LND_ERR_IO);
+        lnd_http_cache_end(s->cache, m->length);
         m->pending = false;
         m->attempts = 0;
         lnd_http_request_close(s);
@@ -137,6 +159,7 @@ int32_t lnd_http_mp4_begin(lnd_http_session *s, const uint8_t *data, size_t byte
         lnd_http_mp4_free(m);
         return LND_ERR_OUT_OF_MEMORY;
     }
+    lnd_http_cache_protect(s->cache, 0, 0);
     lnd_http_request_close(s);
     *out = m;
     return LND_HTTP_PENDING;
@@ -144,6 +167,29 @@ int32_t lnd_http_mp4_begin(lnd_http_session *s, const uint8_t *data, size_t byte
 
 int32_t lnd_http_mp4_step(lnd_http_session *s, lnd_http_mp4 *m, uint32_t budget) {
     for (uint32_t i = 0; i < budget; i++) {
+        bool pcm_full = false;
+        if (s->cache && m->count) {
+            lnd_spinlock_lock(&s->pcm_lock);
+            pcm_full = s->capacity && s->count == s->capacity;
+            lnd_spinlock_unlock(&s->pcm_lock);
+        }
+        if (pcm_full) {
+            m->prefetch = LND_MAX(m->prefetch, m->index);
+            if (m->prefetch == m->count) return LND_HTTP_PENDING;
+            LND_DEMUX_SAMPLE sample;
+            if (LND_DemuxGetSample(m->demux, m->prefetch, &sample) != LND_OK) return LND_ERR_FORMAT;
+            uint64_t played = lnd_load(&s->played);
+            int64_t now_us = (int64_t)(played / s->info.sample_rate_hz * 1000000 + played % s->info.sample_rate_hz * 1000000 / s->info.sample_rate_hz);
+            if (s->options.cache.ahead_ms && sample.packet.time_us >= now_us + (int64_t)s->options.cache.ahead_ms * 1000) return LND_HTTP_PENDING;
+            LND_DEMUX_SAMPLE current;
+            if (LND_DemuxGetSample(m->demux, LND_MIN(m->index, m->count - 1), &current) != LND_OK) return LND_ERR_FORMAT;
+            lnd_http_cache_protect(s->cache, current.offset_bytes, sample.offset_bytes + sample.packet.bytes);
+            if (!lnd_http_cache_reserve(s->cache, sample.offset_bytes)) return LND_HTTP_PENDING;
+            int32_t r = lnd_mp4_http_ensure(s, m, sample.offset_bytes, sample.packet.bytes);
+            if (r != LND_OK) return r;
+            m->prefetch++;
+            continue;
+        }
         if (!m->count) {
             int32_t r = lnd_mp4_http_index(s, m);
             if (r != LND_OK) return r;
@@ -205,6 +251,8 @@ int32_t lnd_http_mp4_seek(lnd_http_session *s, lnd_http_mp4 *m, int64_t time_us)
     m->index = target && low ? low - 1 : 0;
     LND_DEMUX_SAMPLE sample;
     if (LND_DemuxGetSample(m->demux, m->index, &sample) != LND_OK) return LND_ERR_FORMAT;
+    m->prefetch = m->index;
+    lnd_http_cache_protect(s->cache, 0, 0);
     m->packet_at = m->packet.size = 0;
     m->attempts = 0;
     m->retry_at = 0;
@@ -220,6 +268,35 @@ int32_t lnd_http_mp4_seek(lnd_http_session *s, lnd_http_mp4 *m, int64_t time_us)
     s->seek_commit = true;
     lnd_http_state(s, LND_HTTP_SEEKING);
     return LND_OK;
+}
+
+bool lnd_http_mp4_changed(const lnd_http_mp4 *m) { return m->changed; }
+
+void lnd_http_mp4_cache_info(lnd_http_session *s, lnd_http_mp4 *m, LND_HTTP_INFO *info) {
+    if (!s->cache || !m->count || !s->info.sample_rate_hz) return;
+    uint64_t index = LND_MIN(m->index, m->count - 1);
+    LND_DEMUX_SAMPLE sample;
+    if (LND_DemuxGetSample(m->demux, index, &sample) != LND_OK || !lnd_http_cache_has(s->cache, sample.offset_bytes, sample.packet.bytes)) return;
+    uint64_t first = index, last = index;
+    while (first && LND_DemuxGetSample(m->demux, first - 1, &sample) == LND_OK && lnd_http_cache_has(s->cache, sample.offset_bytes, sample.packet.bytes))
+        first--;
+    while (last + 1 < m->count && LND_DemuxGetSample(m->demux, last + 1, &sample) == LND_OK &&
+           lnd_http_cache_has(s->cache, sample.offset_bytes, sample.packet.bytes))
+        last++;
+    if (LND_DemuxGetSample(m->demux, 0, &sample) != LND_OK) return;
+    int64_t preroll =
+        !strcmp(sample.packet.codec, "aac") && sample.packet.config_bytes && ((const uint8_t *)sample.packet.config)[0] >> 3 != 2 ? 750000 : 120000;
+    if (LND_DemuxGetSample(m->demux, first, &sample) != LND_OK) return;
+    int64_t start = first ? sample.packet.time_us + preroll : 0;
+    if (LND_DemuxGetSample(m->demux, last, &sample) != LND_OK) return;
+    int64_t end =
+        sample.packet.time_us + sample.packet.duration_us - (int64_t)((uint64_t)sample.packet.trim_end_frames * 1000000 / sample.packet.sample_rate_hz);
+    uint64_t played = lnd_load(&s->played);
+    int64_t position = (int64_t)(played / s->info.sample_rate_hz * 1000000 + played % s->info.sample_rate_hz * 1000000 / s->info.sample_rate_hz);
+    if (start <= position && position <= end) {
+        info->cached_seek_start_us = start;
+        info->cached_seek_end_us = end;
+    }
 }
 
 size_t lnd_http_mp4_buffered(const lnd_http_mp4 *m) { return m ? m->cache.size + m->packet.size - m->packet_at : 0; }

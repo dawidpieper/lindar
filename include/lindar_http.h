@@ -99,6 +99,16 @@ typedef struct LND_HTTP_BUFFER_OPTIONS {
     uint32_t dvr_ms; /**< Requested live rewind window in milliseconds. */
 } LND_HTTP_BUFFER_OPTIONS;
 
+/** Retained encoded data and prefetch policy for finite HTTP resources; init defaults are 0 bytes and 0 ms.
+ * Positive ahead_ms limits prefetch time; zero fills available cache. Time estimates may use bitrate, and max_bytes is always enforced.
+ * Old data may be evicted within max_bytes. Complete responses are local snapshots; merging responses requires a matching strong ETag and size.
+ * Partial cached seek windows depend on the decoder and may be unavailable.
+ */
+typedef struct LND_HTTP_CACHE_OPTIONS {
+    size_t max_bytes;  /**< Cache allocation limit, including its indexes; 0 disables retention and prefetch. */
+    uint32_t ahead_ms; /**< Requested audio ahead of playback; 0 prefetches until the cache allocation limit. */
+} LND_HTTP_CACHE_OPTIONS;
+
 /** Reconnect backoff and transfer timeouts, in milliseconds. */
 typedef struct LND_HTTP_RETRY_OPTIONS {
     uint32_t attempts; /**< Maximum retry attempts. */
@@ -127,6 +137,7 @@ typedef struct LND_HTTP_OPTIONS {
     uint32_t max_redirects; /**< Maximum followed redirects. */
     uint32_t open_timeout_ms; /**< Total opening deadline through initial buffering, including retries; 0 disables it (default). */
     LND_HTTP_BUFFER_OPTIONS buffer; /**< Buffer thresholds and capacity limits. */
+    LND_HTTP_CACHE_OPTIONS cache;   /**< Optional per-source memory cache; HLS, ICY and live input retain their normal policies. */
     LND_HTTP_RETRY_OPTIONS retry; /**< Retry counts, backoff and timeouts. */
     LND_HTTP_HLS_OPTIONS hls; /**< HLS variant and live latency policy. */
     LND_HTTP_FILE_OPTIONS file; /**< Temporary file cache policy. */
@@ -158,6 +169,9 @@ typedef struct LND_HTTP_INFO {
     bool live; /**< Input is treated as a live stream. */
     bool hls; /**< Input uses an HLS playlist. */
     bool seekable; /**< True if seeking is supported. */
+    bool cache_complete;          /**< A complete finite response is retained as a local snapshot. */
+    int64_t cached_seek_start_us; /**< Start of a confirmed network-free seek window containing position_us; negative if unavailable. */
+    int64_t cached_seek_end_us;   /**< End of the confirmed cached seek window; negative if unavailable. */
     char codec[32]; /**< NUL-terminated selected codec name. */
     char title[512]; /**< NUL-terminated current track title. */
     char station[256]; /**< NUL-terminated station name. */
@@ -174,6 +188,7 @@ typedef struct LND_HTTP_STATS {
     uint64_t events_lost; /**< Events discarded because the event queue was full. */
     uint64_t throughput_bps; /**< Measured transfer throughput in bits per second. */
     uint64_t file_bytes; /**< Bytes held in the temporary file cache. */
+    size_t cache_bytes;  /**< Memory allocated by the optional cache, including its indexes; excludes normal buffering. */
     uint32_t buffered_frames; /**< Frames currently available to read. */
     size_t buffered_bytes; /**< Compressed bytes waiting in decoder/protocol buffers. */
     uint64_t content_bytes; /**< Total encoded content bytes when content_size_known is true. */
@@ -296,6 +311,7 @@ LND_API int32_t LND_SourcePollHttpEvent(LND_SOURCE *source, LND_HTTP_EVENT *even
 /** Request source seek to absolute position_us and optionally write request_id.
  * HLS seeks are limited to the advertised DVR window. Opus and MP4 range seeks are asynchronous.
  * Native Opus ranges require known size, range support and a matching strong ETag; other resources decode from the start.
+ * Cached data is used before requesting ranges; complete cached responses seek through local decoders without HTTP.
  * Duration probing flags do not affect range seeking.
  *
  * @param source Source to operate on.

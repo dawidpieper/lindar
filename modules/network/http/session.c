@@ -1,4 +1,5 @@
 #include "http.h"
+#include "cache.h"
 #include "pcm/audio/channels.h"
 #include "src/native.h"
 #include "lnd_http_transports.h"
@@ -203,6 +204,7 @@ static void lnd_http_destroy(lnd_http_session *s) {
         lnd_callback_leave();
     }
     LND_DecoderFree(s->decoder);
+    lnd_http_cache_free(s);
     if (s->resampler) lnd_source_free(s->resampler);
     for (size_t i = 0; i < s->options.header_count; i++) {
         lnd_free((void *)s->headers[i].name);
@@ -241,7 +243,7 @@ static uint64_t lnd_http_decoder_read(lnd_source *source, float *dst, uint64_t f
 static void lnd_http_decoder_no_free(lnd_source *source) {}
 static const lnd_source_vt lnd_http_decoder_vt = {.read = lnd_http_decoder_read, .free = lnd_http_decoder_no_free};
 
-static void lnd_http_decoder_duration(lnd_http_session *s, const LND_CODEC_INFO *info) {
+void lnd_http_decoder_duration(lnd_http_session *s, const LND_CODEC_INFO *info) {
     if (s->info.hls || s->info.length_kind == LND_LENGTH_EXACT || (!info->length_known && !info->length_frames) || !info->sample_rate_hz) return;
     uint64_t seconds = info->length_frames / info->sample_rate_hz;
     uint64_t fraction = info->length_frames % info->sample_rate_hz * 1000000 / info->sample_rate_hz;
@@ -444,7 +446,7 @@ static void lnd_http_tick(bool worker, uint64_t now, uint32_t budget) {
     lnd_http.now = now;
     uint32_t active = 0, index = 0;
     for (lnd_http_session *s = lnd_http.sessions; s; s = s->next)
-        if (s->worker == worker && !s->finished && !s->cancelled && !lnd_load(&s->detached)) active++;
+        if (s->worker == worker && (!s->finished || lnd_http_cache_pending(s)) && !s->cancelled && !lnd_load(&s->detached)) active++;
     uint32_t start = active ? (uint32_t)(lnd_http.round[worker]++ % active) : 0;
     for (lnd_http_session **p = &lnd_http.sessions; *p;) {
         lnd_http_session *s = *p;
@@ -468,7 +470,7 @@ static void lnd_http_tick(bool worker, uint64_t now, uint32_t budget) {
             s->stats.stalls++;
             lnd_http_state(s, LND_HTTP_BUFFERING);
         }
-        if (!s->finished && active) {
+        if ((!s->finished || lnd_http_cache_pending(s)) && active) {
             uint32_t distance = index >= start ? index - start : active - start + index;
             uint32_t units = budget / active + (distance < budget % active);
             index++;
@@ -606,6 +608,7 @@ LND_HTTP_OPEN *LND_HttpOpen(const char *url, const LND_HTTP_OPTIONS *options) {
     s->probe_duration = !(o.flags & LND_HTTP_NO_PROBE_DURATION) && ((o.flags & LND_HTTP_PROBE_DURATION) || lnd_cfg_bool(LND_CFG_HTTP_PROBE_DURATION));
     s->input.limit = o.buffer.segment_bytes;
     s->now = lnd_http_clock();
+    s->info.cached_seek_start_us = s->info.cached_seek_end_us = -1;
     s->info.state = LND_HTTP_CONNECTING;
     s->info.live = o.content_mode == LND_HTTP_LIVE;
     LND_DECODER_OPTIONS decode = {.codec_name = o.codec_name, .input_bytes = o.buffer.compressed_bytes, .allow_buffered = true};
@@ -675,6 +678,7 @@ static void lnd_http_leave(void) {
 
 static void lnd_http_info(lnd_http_session *s, LND_HTTP_INFO *info) {
     *info = s->info;
+    lnd_http_protocol_cache_info(s, info);
     uint64_t frames = lnd_load(&s->played);
     if (info->sample_rate_hz)
         info->position_us = (int64_t)(frames / info->sample_rate_hz * 1000000 + frames % info->sample_rate_hz * 1000000 / info->sample_rate_hz);
@@ -833,6 +837,7 @@ int32_t LND_SourceGetHttpStats(const LND_SOURCE *source, LND_HTTP_STATS *stats) 
     lnd_http_session *s = lnd_http_find(source);
     if (s) {
         *stats = s->stats;
+        stats->cache_bytes = lnd_http_cache_bytes(s->cache);
         stats->buffered_bytes = LND_DecoderGetBufferedBytes(s->decoder) + s->input.size - s->input_offset + lnd_http_protocol_buffered(s);
         lnd_spinlock_lock(&s->pcm_lock);
         stats->buffered_frames = s->count;
@@ -841,7 +846,11 @@ int32_t LND_SourceGetHttpStats(const LND_SOURCE *source, LND_HTTP_STATS *stats) 
         stats->content_size_known = !s->info.hls && s->response.length_known;
         stats->content_bytes = s->response.range ? s->response.total_length_bytes : s->response.content_length_bytes;
         stats->range_start_bytes = s->response.range ? s->response.range_start_bytes : 0;
-        stats->download_complete = !s->info.live && (s->input_end || lnd_http_protocol_complete(s));
+        stats->download_complete = !s->info.live && (s->input_end || lnd_http_protocol_complete(s) || lnd_http_cache_complete(s->cache));
+        if (lnd_http_cache_complete(s->cache)) {
+            stats->content_size_known = true;
+            stats->content_bytes = lnd_http_cache_size(s->cache);
+        }
         lnd_spinlock_unlock(&s->pcm_lock);
     }
     lnd_http_leave();
