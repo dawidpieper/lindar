@@ -45,7 +45,7 @@ int32_t lnd_ios_native_configure(const LND_IOS_SESSION_CONFIG *config) {
 int32_t lnd_ios_native_active(bool active) {
     @autoreleasepool {
         AVAudioSessionSetActiveOptions options = active ? 0 : AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation;
-        return [[AVAudioSession sharedInstance] setActive:active options:options error:NULL] ? LND_OK : LND_ERR_EXTERNAL;
+        return [[AVAudioSession sharedInstance] setActive:active withOptions:options error:NULL] ? LND_OK : LND_ERR_EXTERNAL;
     }
 }
 
