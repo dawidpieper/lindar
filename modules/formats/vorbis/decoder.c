@@ -47,6 +47,26 @@ static const ov_callbacks lnd_vorbis_callbacks = {
     .tell_func = lnd_vorbis_tell_cb,
 };
 
+#if LND_MODULE_HTTP
+#include "formats/ogg/duration.h"
+
+int32_t lnd_vorbis_duration(lnd_io *io, int64_t *duration_us) {
+    OggVorbis_File file;
+    if (ov_open_callbacks(io, &file, nullptr, 0, lnd_vorbis_callbacks)) return LND_ERR_FORMAT;
+    double duration = ov_time_total(&file, -1) * 1000000;
+    bool valid = true;
+    long links = ov_streams(&file);
+    for (long link = 0; valid && link < links; link++) {
+        uint64_t end = link + 1 < links ? (uint64_t)file.offsets[link + 1] : io->size;
+        valid = lnd_ogg_duration_end(io, end, (int32_t)ov_serialnumber(&file, (int)link));
+    }
+    ov_clear(&file);
+    if (!valid || !(duration >= 0 && duration < (double)INT64_MAX)) return LND_ERR_FORMAT;
+    *duration_us = (int64_t)(duration + 0.5);
+    return LND_OK;
+}
+#endif
+
 static bool lnd_ogg_has(const uint8_t *h, size_t n, const char *magic, size_t len) {
     if (n < 28 || memcmp(h, "OggS", 4) != 0) return false;
     for (size_t i = 27; i + len <= n; i++) {

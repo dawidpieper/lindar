@@ -99,6 +99,7 @@ typedef struct lnd_http_session {
     uint64_t overflow_reported;
     bool variant_changed;
     bool worker;
+    bool probe_duration;
     bool cancelled;
     bool finished;
     bool input_end;
@@ -125,6 +126,7 @@ void lnd_http_metadata_update(lnd_http_session *s);
 void lnd_http_id3(lnd_http_session *s, const uint8_t *data, size_t bytes, int64_t time_us);
 void lnd_http_state(lnd_http_session *s, int32_t state);
 void lnd_http_fail(lnd_http_session *s, int32_t error, const char *message);
+int32_t lnd_http_request_open(lnd_http_session *s, const char *url, const char *validator, bool range, uint64_t start, uint64_t length, void **transfer);
 int32_t lnd_http_request(lnd_http_session *s, const char *url, bool range, uint64_t start, uint64_t length);
 int32_t lnd_http_poll(lnd_http_session *s, void *data, size_t capacity, size_t *written);
 void lnd_http_request_close(lnd_http_session *s);

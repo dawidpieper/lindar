@@ -8,11 +8,14 @@
 extern "C" {
 #endif
 
+/** Key "http.probe_duration": Probe finite Ogg duration; session flags override it (default 1). */
+LND_API extern LND_CONFIG_KEY *const LND_CFG_HTTP_PROBE_DURATION;
+
 /** Pending HTTP opening operation; take its source or cancel, then release with HttpOpenFree. */
 typedef struct LND_HTTP_OPEN LND_HTTP_OPEN;
 
 /** Transport callback table borrowed for the session lifetime; optional session callbacks share transport
- * state.
+ * state. Duration probing may keep a second transfer active in the same session.
  */
 typedef struct LND_HTTP_TRANSPORT LND_HTTP_TRANSPORT;
 
@@ -70,7 +73,9 @@ enum {
 enum {
     LND_HTTP_NO_USER_AGENT = 1u << 0, /**< Suppress the default User-Agent header. */
     LND_HTTP_ALLOW_HTTP_REDIRECT = 1u << 1, /**< Permit an HTTPS request to redirect to plain HTTP. */
-    LND_HTTP_RESUME_LIVE = 1u << 2 /**< Allow reconnection/resumption of live input. */
+    LND_HTTP_RESUME_LIVE = 1u << 2, /**< Allow reconnection/resumption of live input. */
+    LND_HTTP_PROBE_DURATION = 1u << 3, /**< Enable finite Ogg duration probing for this session. */
+    LND_HTTP_NO_PROBE_DURATION = 1u << 4 /**< Disable duration probing; mutually exclusive with PROBE_DURATION. */
 };
 
 /** One request header; origin and flags restrict forwarding of sensitive values. */
@@ -87,7 +92,7 @@ typedef struct LND_HTTP_BUFFER_OPTIONS {
     uint32_t resume_ms; /**< Decoded audio required after a stall. */
     uint32_t pcm_ms; /**< Decoded PCM queue capacity in milliseconds. */
     size_t compressed_bytes; /**< Compressed decoder input capacity in bytes. */
-    size_t segment_bytes; /**< Maximum buffered segment size in bytes. */
+    size_t segment_bytes; /**< Maximum buffered segment or duration probe cache size in bytes. */
     size_t playlist_bytes; /**< Maximum downloaded playlist size in bytes. */
     uint32_t playlist_entries; /**< Maximum parsed playlist entries. */
     uint32_t event_count; /**< Maximum queued HTTP events. */
@@ -108,7 +113,7 @@ typedef struct LND_HTTP_RETRY_OPTIONS {
  */
 typedef struct LND_HTTP_OPTIONS {
     uint32_t size; /**< sizeof(LND_HTTP_OPTIONS), set by HttpOptionsInit. */
-    uint32_t flags; /**< LND_HTTP_NO_USER_AGENT, ALLOW_HTTP_REDIRECT and RESUME_LIVE bits. */
+    uint32_t flags; /**< LND_HTTP policy bits; absent duration flags inherit CFG at HttpOpen. */
     const char *user_agent; /**< User-Agent string; NULL uses the default unless disabled by flags. */
     const LND_HTTP_HEADER *headers; /**< Array of request headers. */
     size_t header_count; /**< Number of entries in headers. */
@@ -205,6 +210,8 @@ LND_API uint32_t LND_HttpGetCapabilities(void);
  * Incremental WAV, MP3, AAC, Opus, Vorbis and FLAC require their enabled codecs. HLS uses MP4/TS
  * demuxers; ffmpeg_stream adds Matroska/WebM/ASF. File-only decoders wait for a complete finite
  * response. Unsupported MP4 range indexes, edit layouts or servers fall back to complete-file decoding.
+ * Finite Ogg duration probing needs byte ranges, a known size and a strong ETag. CFG is captured
+ * at opening; probe failure preserves streaming. Duration may arrive after playback becomes ready.
  * open_timeout_ms runs from this call until playback is first ready, including short files reaching EOF.
  * Taking the source does not stop the timer. Expiry reports LND_HTTP_ERR_TIMEOUT without retrying and
  * discards initial PCM. Workers/updates enforce the deadline; transport callbacks must return promptly.
@@ -370,7 +377,7 @@ typedef struct LND_HTTP_RESPONSE {
 } LND_HTTP_RESPONSE;
 
 /** Transport callback table borrowed for the session lifetime; optional session callbacks share transport
- * state.
+ * state. Duration probing may keep a second transfer active in the same session.
  */
 struct LND_HTTP_TRANSPORT {
     uint32_t size; /**< sizeof(LND_HTTP_TRANSPORT). */

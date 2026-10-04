@@ -150,44 +150,48 @@ int32_t lnd_http_poll(lnd_http_session *s, void *data, size_t capacity, size_t *
     return r;
 }
 
-int32_t lnd_http_request(lnd_http_session *s, const char *url, bool range, uint64_t start, uint64_t length) {
+int32_t lnd_http_request_open(lnd_http_session *s, const char *url, const char *validator, bool range, uint64_t start, uint64_t length, void **transfer) {
     if (!lnd_http_url_valid(url) || (s->options.header_count && !s->headers)) return LND_ERR_INVALID_ARG;
+    LND_HTTP_HEADER *headers = s->headers ? s->headers + s->options.header_count : nullptr;
+    size_t header_count = 0;
+    for (size_t i = 0; i < s->options.header_count; i++)
+        if (!s->headers[i].origin || lnd_http_same_origin(s->headers[i].origin, url)) headers[header_count++] = s->headers[i];
+    LND_HTTP_REQUEST request = {.url = url,
+                                .user_agent = s->options.user_agent,
+                                .headers = headers,
+                                .header_count = header_count,
+                                .proxy = s->options.proxy,
+                                .ca_file = s->options.ca_file,
+                                .if_range = validator && *validator ? validator : nullptr,
+                                .range = range,
+                                .range_start_bytes = start,
+                                .range_length_bytes = length,
+                                .flags = s->options.flags & ~(uint32_t)(LND_HTTP_PROBE_DURATION | LND_HTTP_NO_PROBE_DURATION),
+                                .connect_timeout_ms = s->options.retry.connect_timeout_ms,
+                                .receive_timeout_ms = s->options.retry.receive_timeout_ms,
+                                .max_redirects = s->options.max_redirects,
+                                .manual = !s->worker};
+    lnd_callback_enter();
+    int32_t r = s->transport->open(s->transport_user, &request, transfer);
+    lnd_callback_leave();
+    if (r != LND_OK || !*transfer) return r < 0 ? r : LND_ERR_IO;
+    s->stats.requests++;
+    return LND_OK;
+}
+
+int32_t lnd_http_request(lnd_http_session *s, const char *url, bool range, uint64_t start, uint64_t length) {
+    if (!lnd_http_url_valid(url)) return LND_ERR_INVALID_ARG;
     char *copy = lnd_http_copy(url);
     if (!copy) return LND_ERR_OUT_OF_MEMORY;
     lnd_http_request_close(s);
     s->request_url = copy;
     for (char *p = copy; *p && *p != ':'; p++)
         if (*p >= 'A' && *p <= 'Z') *p += 'a' - 'A';
-    LND_HTTP_HEADER *headers = s->headers ? s->headers + s->options.header_count : nullptr;
-    size_t header_count = 0;
-    for (size_t i = 0; i < s->options.header_count; i++)
-        if (!s->headers[i].origin || lnd_http_same_origin(s->headers[i].origin, copy)) headers[header_count++] = s->headers[i];
-    LND_HTTP_REQUEST request = {.url = copy,
-                                .user_agent = s->options.user_agent,
-                                .headers = headers,
-                                .header_count = header_count,
-                                .proxy = s->options.proxy,
-                                .ca_file = s->options.ca_file,
-                                .if_range = *s->if_range ? s->if_range : nullptr,
-                                .range = range,
-                                .range_start_bytes = start,
-                                .range_length_bytes = length,
-                                .flags = s->options.flags,
-                                .connect_timeout_ms = s->options.retry.connect_timeout_ms,
-                                .receive_timeout_ms = s->options.retry.receive_timeout_ms,
-                                .max_redirects = s->options.max_redirects,
-                                .manual = !s->worker};
     s->response = (LND_HTTP_RESPONSE){0};
-    lnd_callback_enter();
-    int32_t r = s->transport->open(s->transport_user, &request, &s->transfer);
-    lnd_callback_leave();
-    if (r != LND_OK || !s->transfer) {
-        lnd_http_request_close(s);
-        return r < 0 ? r : LND_ERR_IO;
-    }
+    int32_t r = lnd_http_request_open(s, copy, s->if_range, range, start, length, &s->transfer);
+    if (r != LND_OK) lnd_http_request_close(s);
     s->last_data = s->now;
-    s->stats.requests++;
-    return LND_OK;
+    return r;
 }
 
 static void lnd_http_destroy(lnd_http_session *s) {
@@ -237,9 +241,19 @@ static uint64_t lnd_http_decoder_read(lnd_source *source, float *dst, uint64_t f
 static void lnd_http_decoder_no_free(lnd_source *source) {}
 static const lnd_source_vt lnd_http_decoder_vt = {.read = lnd_http_decoder_read, .free = lnd_http_decoder_no_free};
 
+static void lnd_http_decoder_duration(lnd_http_session *s, const LND_CODEC_INFO *info) {
+    if (s->info.hls || s->info.length_kind == LND_LENGTH_EXACT || (!info->length_known && !info->length_frames) || !info->sample_rate_hz) return;
+    uint64_t seconds = info->length_frames / info->sample_rate_hz;
+    uint64_t fraction = info->length_frames % info->sample_rate_hz * 1000000 / info->sample_rate_hz;
+    if (seconds > ((uint64_t)INT64_MAX - fraction) / 1000000) return;
+    s->info.duration_us = s->info.seek_end_us = (int64_t)(seconds * 1000000 + fraction);
+    s->info.length_kind = info->length_estimated ? LND_LENGTH_ESTIMATED : LND_LENGTH_EXACT;
+}
+
 static int32_t lnd_http_prepare(lnd_http_session *s) {
     LND_CODEC_INFO info;
     if (LND_DecoderGetInfo(s->decoder, &info) != LND_OK) return LND_HTTP_PENDING;
+    lnd_http_decoder_duration(s, &info);
     if (s->ring) {
         if (info.channels != s->format.channels || info.sample_rate_hz != s->format.sample_rate_hz) {
             if (!info.channels || info.channels > LND_MAX_CHANNELS || !info.sample_rate_hz || info.sample_rate_hz > 768000) return LND_ERR_FORMAT;
@@ -272,11 +286,6 @@ static int32_t lnd_http_prepare(lnd_http_session *s) {
     s->format = info;
     s->info.sample_rate_hz = sample_rate_hz;
     s->info.channels = channels;
-    if (info.length_frames) {
-        s->info.duration_us =
-            (int64_t)(info.length_frames / info.sample_rate_hz * 1000000 + info.length_frames % info.sample_rate_hz * 1000000 / info.sample_rate_hz);
-        s->info.length_kind = info.length_estimated ? LND_LENGTH_ESTIMATED : LND_LENGTH_EXACT;
-    }
     const LND_CODEC *codec = LND_DecoderGetCodec(s->decoder);
     if (codec) snprintf(s->info.codec, sizeof s->info.codec, "%s", codec->name);
     s->decode_source = (lnd_source){.vt = &lnd_http_decoder_vt, .channels = info.channels, .sample_rate_hz = info.sample_rate_hz, .live = true};
@@ -344,12 +353,7 @@ int32_t lnd_http_decode(lnd_http_session *s) {
     if (s->decoder_end && s->input_end) {
         s->open_deadline = 0;
         LND_CODEC_INFO info;
-        if (!s->info.hls && s->info.length_kind != LND_LENGTH_EXACT && LND_DecoderGetInfo(s->decoder, &info) == LND_OK && info.length_frames) {
-            s->info.duration_us =
-                (int64_t)(info.length_frames / info.sample_rate_hz * 1000000 + info.length_frames % info.sample_rate_hz * 1000000 / info.sample_rate_hz);
-            s->info.length_kind = info.length_estimated ? LND_LENGTH_ESTIMATED : LND_LENGTH_EXACT;
-            s->info.seek_end_us = s->info.duration_us;
-        }
+        if (LND_DecoderGetInfo(s->decoder, &info) == LND_OK) lnd_http_decoder_duration(s, &info);
         if (s->seek_commit) {
             s->seek_commit = false;
             uint64_t us = (uint64_t)s->seek_target_us;
@@ -521,7 +525,8 @@ LND_HTTP_OPEN *LND_HttpOpen(const char *url, const LND_HTTP_OPTIONS *options) {
     uint64_t opened_at = o.open_timeout_ms ? lnd_http_clock() : 0;
     if (!lnd_http_url_valid(url) || !lnd_http_text_valid(o.user_agent, 4096) || !lnd_http_text_valid(o.codec_name, 64) ||
         !lnd_http_text_valid(o.file.directory, 32768) || o.file.max_bytes > INT64_MAX ||
-        o.flags & ~(uint32_t)(LND_HTTP_NO_USER_AGENT | LND_HTTP_ALLOW_HTTP_REDIRECT | LND_HTTP_RESUME_LIVE) ||
+        o.flags & ~(uint32_t)(LND_HTTP_NO_USER_AGENT | LND_HTTP_ALLOW_HTTP_REDIRECT | LND_HTTP_RESUME_LIVE | LND_HTTP_PROBE_DURATION | LND_HTTP_NO_PROBE_DURATION) ||
+        (o.flags & (LND_HTTP_PROBE_DURATION | LND_HTTP_NO_PROBE_DURATION)) == (LND_HTTP_PROBE_DURATION | LND_HTTP_NO_PROBE_DURATION) ||
         o.header_count > 128 || (o.header_count && !o.headers) ||
         o.content_mode < LND_HTTP_AUTO || o.content_mode > LND_HTTP_LIVE || o.execution < LND_HTTP_EXEC_AUTO || o.execution > LND_HTTP_EXEC_WORKER ||
         !o.buffer.pcm_ms || o.buffer.pcm_ms > 600000 || o.buffer.start_ms > o.buffer.pcm_ms || o.buffer.resume_ms > o.buffer.pcm_ms ||
@@ -598,6 +603,7 @@ LND_HTTP_OPEN *LND_HttpOpen(const char *url, const LND_HTTP_OPTIONS *options) {
         s->transport_owned = result == LND_OK;
     }
     s->worker = worker;
+    s->probe_duration = !(o.flags & LND_HTTP_NO_PROBE_DURATION) && ((o.flags & LND_HTTP_PROBE_DURATION) || lnd_cfg_bool(LND_CFG_HTTP_PROBE_DURATION));
     s->input.limit = o.buffer.segment_bytes;
     s->now = lnd_http_clock();
     s->info.state = LND_HTTP_CONNECTING;

@@ -37,6 +37,31 @@ static const OpusFileCallbacks lnd_opus_callbacks = {
     .close = nullptr,
 };
 
+#if LND_MODULE_HTTP
+#include "formats/ogg/duration.h"
+
+int32_t lnd_opus_duration(lnd_io *io, int64_t *duration_us) {
+    OggOpusFile *file = op_open_callbacks(io, &lnd_opus_callbacks, nullptr, 0, nullptr);
+    if (!file) return LND_ERR_FORMAT;
+    ogg_int64_t frames = op_pcm_total(file, -1);
+    uint64_t end = 0;
+    bool valid = true;
+    for (int link = 0; valid && link < op_link_count(file); link++) {
+        opus_int64 bytes = op_raw_total(file, link);
+        valid = bytes > 0 && (uint64_t)bytes <= io->size - end;
+        if (valid) {
+            end += (uint64_t)bytes;
+            valid = lnd_ogg_duration_end(io, end, (int32_t)op_serialno(file, link));
+        }
+    }
+    op_free(file);
+    uint64_t fraction = frames >= 0 ? (uint64_t)(frames % 48000) * 1000000 / 48000 : 0;
+    if (!valid || end != io->size || frames < 0 || (uint64_t)(frames / 48000) > ((uint64_t)INT64_MAX - fraction) / 1000000) return LND_ERR_FORMAT;
+    *duration_us = frames / 48000 * 1000000 + (int64_t)fraction;
+    return LND_OK;
+}
+#endif
+
 static int32_t lnd_opus_probe(LND_IO *io) {
     uint8_t h[64];
     int64_t n = LND_IoRead(io, h, sizeof h);

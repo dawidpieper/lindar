@@ -25,6 +25,8 @@ static void play(const char *base, const char *path, const char *reference_path,
     if (!strcmp(path, "/bad-cache-dir")) options.file.directory = "lindar-missing-directory";
     if (!strcmp(path, "/icy")) options.content_mode = LND_HTTP_FINITE;
     options.buffer.start_ms = options.buffer.resume_ms = 0;
+    bool probe_duration = !strcmp(path, "/tone.opus") || !strcmp(path, "/tone.ogg");
+    if (probe_duration) options.buffer.pcm_ms = 25;
     options.retry.delay_ms = 5;
     options.retry.attempts = 2;
     options.retry.receive_timeout_ms = 1000;
@@ -41,6 +43,15 @@ static void play(const char *base, const char *path, const char *reference_path,
     while (open && lnd_time_ns() < deadline) {
         if (!worker) CHECK(LND_HttpUpdate(lnd_time_ns() / 1000000, 32) == LND_OK);
         if (!source) {
+            if (probe_duration) {
+                LND_HTTP_INFO info;
+                CHECK(LND_HttpOpenGetInfo(open, &info) == LND_OK);
+                if (info.state != LND_HTTP_FAILED && info.length_kind != LND_LENGTH_EXACT) {
+                    lnd_sleep_ms(1);
+                    continue;
+                }
+                CHECK(info.length_kind == LND_LENGTH_EXACT && info.duration_us == 2000000 && info.seek_end_us == 2000000);
+            }
             result = LND_HttpOpenTakeSource(open, &source);
             if (result < 0) break;
         }

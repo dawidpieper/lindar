@@ -47,7 +47,10 @@ static int32_t lnd_vorbis_stream_step(void *state, const uint8_t *data, size_t b
     if (result < 0) return LND_ERR_FORMAT;
     if (!result) {
         int32_t r = lnd_ogg_stream_feed(&s->ogg, data, bytes, end, used);
-        if (r == LND_SOURCE_EOF) info->length_frames = s->total;
+        if (r == LND_SOURCE_EOF) {
+            info->length_frames = s->total;
+            info->length_known = true;
+        }
         if (s->ogg.chain) {
             if (s->initialized) {
                 vorbis_block_clear(&s->block);

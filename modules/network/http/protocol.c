@@ -1,4 +1,5 @@
 #include "http.h"
+#include "ogg.h"
 #if LND_HTTP_HLS
 #include "network/http/http_hls/session.h"
 #endif
@@ -19,6 +20,8 @@ enum { LND_TRANSFER_RECEIVING, LND_TRANSFER_COMPLETE, LND_TRANSFER_RECONNECT };
 
 typedef struct lnd_http_protocol {
     uint32_t redirects;
+    lnd_http_ogg *ogg;
+    bool probe_turn;
 #if LND_MODULE_HTTP_FILE
     LND_IO *file;
     bool file_decoding;
@@ -80,6 +83,7 @@ static int32_t lnd_http_retry(lnd_http_session *s, lnd_http_protocol *p, int32_t
 #if LND_MODULE_HTTP_FILE
     LND_IoFree(p->file);
 #endif
+    lnd_http_ogg_free(s, p->ogg);
     *p = (lnd_http_protocol){.progress_frames = s->stats.decoded_frames};
     *s->if_range = 0;
     s->input.size = s->input_offset = 0;
@@ -177,6 +181,7 @@ static int32_t lnd_http_drain(lnd_http_session *s, lnd_http_protocol *p) {
 #endif
     if (r < 0) return r;
     if (s->finished) {
+        lnd_http_ogg_stop(s, p->ogg);
         lnd_http_request_close(s);
         return LND_HTTP_DONE;
     }
@@ -208,6 +213,14 @@ static int32_t lnd_http_headers(lnd_http_session *s, lnd_http_protocol *p) {
     if (s->response.status < 200 || s->response.status >= 300) return lnd_http_retry(s, p, LND_ERR_IO);
     if (!p->headers) {
         p->headers = true;
+        s->icy_remaining = s->response.icy_interval_bytes;
+        if ((s->response.icy_interval_bytes || *s->response.station) && s->options.content_mode == LND_HTTP_AUTO) s->info.live = true;
+        if (p->ogg && !lnd_http_ogg_matches(s, p->ogg)) {
+            lnd_http_ogg_free(s, p->ogg);
+            p->ogg = nullptr;
+            s->info.duration_us = s->info.seek_end_us = 0;
+            s->info.length_kind = LND_LENGTH_UNKNOWN;
+        }
         if (p->range && (!s->response.range || s->response.range_start_bytes != p->range_start_bytes || s->response.total_length_bytes != p->total_length_bytes ||
                          strcmp(s->response.etag, s->if_range)))
             return LND_ERR_IO;
@@ -219,8 +232,6 @@ static int32_t lnd_http_headers(lnd_http_session *s, lnd_http_protocol *p) {
             p->resume_url = lnd_http_copy(s->request_url);
             if (!p->resume_url) return LND_ERR_OUT_OF_MEMORY;
         }
-        s->icy_remaining = s->response.icy_interval_bytes;
-        if ((s->response.icy_interval_bytes || *s->response.station) && s->options.content_mode == LND_HTTP_AUTO) s->info.live = true;
         snprintf(s->info.station, sizeof s->info.station, "%s", s->response.station);
         lnd_http_state(s, LND_HTTP_PROBING);
     }
@@ -247,6 +258,8 @@ static int32_t lnd_http_classify(lnd_http_session *s, lnd_http_protocol *p) {
             return r;
         }
 #endif
+        if (!p->ogg && p->content == LND_CONTENT_AUDIO && n >= 4 && !memcmp(data_start, "OggS", 4))
+            p->ogg = lnd_http_ogg_begin(s, s->input.data, s->input.size);
         if (p->content == LND_CONTENT_PLAYLIST) s->input.limit = s->options.buffer.playlist_bytes;
         else s->info.seekable = !s->info.live;
     }
@@ -306,6 +319,10 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
         int32_t r = lnd_http_request(s, p->resume_url ? p->resume_url : s->url, p->range, p->range_start_bytes, 0);
         if (r != LND_OK) return lnd_http_retry(s, p, r);
     }
+    if (p->ogg && p->headers && (!p->probe_turn || budget > 1)) {
+        p->probe_turn = true;
+        if (lnd_http_ogg_step(s, p->ogg) && !--budget) return LND_HTTP_PENDING;
+    } else p->probe_turn = false;
     for (uint32_t step = 0; step < budget; step++) {
         if (p->content == LND_CONTENT_AUDIO) {
             int32_t r = lnd_http_drain(s, p);
@@ -349,7 +366,7 @@ int32_t lnd_http_protocol_step(lnd_http_session *s, uint32_t budget) {
 size_t lnd_http_protocol_buffered(const lnd_http_session *s) {
     const lnd_http_protocol *p = s->protocol;
     if (!p) return 0;
-    size_t bytes = 0;
+    size_t bytes = lnd_http_ogg_buffered(p->ogg);
 #if LND_HTTP_HLS
     bytes += lnd_hls_buffered(p->hls);
 #endif
@@ -365,6 +382,7 @@ void lnd_http_protocol_free(lnd_http_session *s) {
     if (p) lnd_hls_free(p->hls);
 #endif
     lnd_http_protocol *protocol = s->protocol;
+    if (protocol) lnd_http_ogg_free(s, protocol->ogg);
 #if LND_HTTP_MP4
     if (protocol) lnd_http_mp4_free(protocol->mp4);
 #endif
@@ -397,7 +415,7 @@ int32_t lnd_http_protocol_seek(lnd_http_session *s, int64_t time_us, bool live) 
     LND_IoFree(state->file);
     s->stats.file_bytes = 0;
 #endif
-    *state = (lnd_http_protocol){0};
+    *state = (lnd_http_protocol){.ogg = state->ogg};
 #if LND_HTTP_MP4
     state->mp4_tried = mp4_tried;
 #endif

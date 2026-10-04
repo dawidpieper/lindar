@@ -9,8 +9,10 @@ typedef struct lnd_opus_stream {
     OpusHead head;
     void *pcm;
     uint64_t decoded;
+    uint64_t origin;
     uint64_t total;
     uint32_t headers;
+    bool origin_known;
     bool raw;
 } lnd_opus_stream;
 
@@ -39,6 +41,7 @@ static int32_t lnd_opus_stream_step(void *state, const uint8_t *data, size_t byt
     if (s->raw) {
         if (!bytes && end) {
             info->length_frames = s->total;
+            info->length_known = true;
             return LND_SOURCE_EOF;
         }
         if (bytes < 8) return end ? LND_ERR_FORMAT : LND_SOURCE_WAITING;
@@ -54,14 +57,18 @@ static int32_t lnd_opus_stream_step(void *state, const uint8_t *data, size_t byt
         if (result < 0) return LND_ERR_FORMAT;
         if (!result) {
             int32_t r = lnd_ogg_stream_feed(&s->ogg, data, bytes, end, used);
-            if (r == LND_SOURCE_EOF) info->length_frames = s->total;
+            if (r == LND_SOURCE_EOF) {
+                info->length_frames = s->total;
+                info->length_known = true;
+            }
             if (s->ogg.chain) {
                 if (s->decoder) opus_multistream_decoder_destroy(s->decoder);
                 s->decoder = nullptr;
                 lnd_free(s->pcm);
                 s->pcm = nullptr;
                 s->headers = 0;
-                s->decoded = 0;
+                s->decoded = s->origin = 0;
+                s->origin_known = false;
                 s->ogg.chain = false;
             }
             return r;
@@ -92,9 +99,14 @@ static int32_t lnd_opus_stream_step(void *state, const uint8_t *data, size_t byt
     size_t skip = (size_t)LND_MIN((uint64_t)got, first < s->head.pre_skip ? s->head.pre_skip - first : 0);
     size_t limit = s->raw && declared ? declared : (size_t)got;
     size_t take = limit - LND_MIN(skip, limit);
+    if (!s->raw && !s->origin_known && packet.granulepos >= 0) {
+        s->origin = (uint64_t)packet.granulepos > s->decoded ? (uint64_t)packet.granulepos - s->decoded : 0;
+        s->origin_known = true;
+    }
     if (packet.e_o_s && packet.granulepos >= 0) {
         uint64_t position = first + skip;
-        take = (size_t)LND_MIN(take, (uint64_t)packet.granulepos > position ? (uint64_t)packet.granulepos - position : 0);
+        uint64_t end = (uint64_t)packet.granulepos >= s->origin ? (uint64_t)packet.granulepos - s->origin : 0;
+        take = (size_t)LND_MIN(take, end > position ? end - position : 0);
     }
     *pcm = (LND_PCM){.data = (uint8_t *)s->pcm + skip * info->channels * LND_PcmGetSampleBytes(info->format),
                      .frames = take,
