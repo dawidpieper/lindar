@@ -204,6 +204,7 @@ function(lnd_vendor_openssl)
         file(WRITE "${build}/lindar-config" "${fingerprint}")
     endif()
     add_custom_command(OUTPUT "${crypto}" "${ssl}"
+        COMMAND "${CMAKE_COMMAND}" -E env "PATH=${tool_path}" ${env} "${LND_OPENSSL_PERL}" ${args}
         COMMAND "${CMAKE_COMMAND}" -E env "PATH=${tool_path}" ${env} "${LND_OPENSSL_MAKE}" ${make_flags} build_libs
         WORKING_DIRECTORY "${build}" DEPENDS "${build}/lindar-config"
         USES_TERMINAL VERBATIM)
