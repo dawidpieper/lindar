@@ -56,6 +56,7 @@ static void broadcast(const char *url, const char *admin, int protocol, bool enc
 }
 int main(int argc, char **argv) {
     if (argc != 4) return 2;
+    CHECK(LND_ConfigSet(LND_CFG_RUN_MODE, LND_MODE_SINGLE_THREADED) == LND_OK);
     CHECK(LND_LibraryInit() == LND_OK);
     broadcast(argv[1], argv[3], LND_CAST_SHOUTCAST, false, false);
     broadcast(argv[2], argv[3], LND_CAST_ICECAST, false, false);

@@ -1,7 +1,7 @@
 #include "sine_mcu.h"
 #include "platform.h"
 
-static alignas(max_align_t) uint8_t workspace[1024];
+alignas(max_align_t) static uint8_t workspace[1024];
 static int16_t buffers[2][64];
 
 int main(void) {

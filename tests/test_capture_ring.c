@@ -151,6 +151,7 @@ static void test_source_available(void) {
 }
 
 static void test_control(void) {
+    CHECK(LND_ConfigSet(LND_CFG_RUN_MODE, LND_MODE_SINGLE_THREADED) == LND_OK);
     CHECK(LND_LibraryInit() == LND_OK);
     lnd_capture *c = lnd_capture_new(1, 48000, 1024);
     lnd_source *inner = lnd_capture_source_create(c, 1, 44100, LND_CAPTURE_RESAMPLE | LND_CAPTURE_NONBLOCKING);

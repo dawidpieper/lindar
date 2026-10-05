@@ -5,7 +5,7 @@
 
 static volatile uint32_t initialized = UINT32_C(0x12345678), zeroed;
 static unsigned checks;
-static alignas(max_align_t) uint8_t source_memory[768], sound_memory[128], render_memory[768];
+alignas(max_align_t) static uint8_t source_memory[768], sound_memory[128], render_memory[768];
 #define CHECK(value) do { checks++; if (!(value)) { qemu_value("LND_FAIL", __LINE__); qemu_exit(1); } } while (0)
 
 static uint32_t checksum(const int16_t *pcm, size_t count) {

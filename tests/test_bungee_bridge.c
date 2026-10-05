@@ -148,6 +148,9 @@ static void large_positions(void) {
 }
 
 int main(void) {
+    /* OpenSSL keeps process-wide allocations until exit. */
+    CHECK(LND_ConfigSet(LND_CFG_RUN_MODE, LND_MODE_SINGLE_THREADED) == LND_OK && LND_LibraryInit() == LND_OK);
+    LND_LibraryFree();
     unsigned baseline = live;
     allocations();
     steady_state();
