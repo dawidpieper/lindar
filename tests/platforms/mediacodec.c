@@ -65,7 +65,9 @@ media_status_t AMediaExtractor_setDataSourceCustom(AMediaExtractor *s, AMediaDat
     char bytes[8];
     CHECK(input->read(input->user, 0, bytes, 8) == 8 && !memcmp(bytes, "testdata", 8));
     CHECK(input->read(input->user, -1, bytes, 8) == -1);
-    CHECK(input->read(input->user, 8, bytes, 8) == -1);
+    CHECK(input->read(input->user, 4, bytes, 8) == 4 && !memcmp(bytes, "data", 4));
+    CHECK(input->read(input->user, 8, bytes, 4) == 0);
+    CHECK(input->read(input->user, 9, bytes, 4) == 0);
     CHECK(input->read(input->user, 8, bytes, 0) == 0);
     return AMEDIA_OK;
 }
@@ -199,12 +201,65 @@ bool AMediaFormat_getString(AMediaFormat *f, const char *key, const char **value
     return true;
 }
 
+typedef struct test_stream {
+    size_t position, size;
+    int32_t read_error, seek_error;
+} test_stream;
+
+static int64_t stream_read(void *user, void *dst, size_t size) {
+    test_stream *s = user;
+    if (s->read_error) return s->read_error;
+    if (s->position >= s->size) return LND_READ_EOF;
+    size_t take = LND_MIN(size, LND_MIN((size_t)2, s->size - s->position));
+    static const char data[] = "testdata";
+    memcpy(dst, data + s->position, take);
+    s->position += take;
+    return (int64_t)take;
+}
+
+static int32_t stream_seek(void *user, uint64_t position) {
+    test_stream *s = user;
+    if (s->seek_error) return s->seek_error;
+    s->position = (size_t)position;
+    return LND_OK;
+}
+
+static void test_input_callback(void) {
+    test_stream input = {.size = 8};
+    lnd_mc_state s = {.io = LND_IoCreateStream(&(LND_IO_STREAM_INPUT_PROCS){.read = stream_read, .seek = stream_seek}, &input, 8)};
+    CHECK(s.io != nullptr);
+    if (!s.io) return;
+    lnd_mutex_init(&s.io_lock);
+    char data[8];
+    CHECK(lnd_mc_input(&s, 4, data, sizeof data) == 2 && !memcmp(data, "da", 2));
+    CHECK(lnd_mc_input(&s, 6, data, sizeof data) == 2 && !memcmp(data, "ta", 2));
+    CHECK(lnd_mc_input(&s, 8, data, sizeof data) == 0);
+    input.size = 6;
+    CHECK(lnd_mc_input(&s, 6, data, sizeof data) == 0);
+    CHECK(lnd_mc_input(&s, -1, data, 1) == -1);
+    CHECK(lnd_mc_input(&s, 0, data, (size_t)PTRDIFF_MAX + 1) == -1);
+    input.read_error = LND_ERR_IO;
+    CHECK(lnd_mc_input(&s, 0, data, sizeof data) < 0);
+    input.read_error = 0;
+    input.seek_error = LND_ERR_IO;
+    CHECK(lnd_mc_input(&s, 4, data, sizeof data) < 0);
+    input.seek_error = 0;
+    CHECK(lnd_mc_input(&s, 0, data, sizeof data) == 2);
+    lnd_mc_input_close(&s);
+    CHECK(lnd_mc_input(&s, 0, data, sizeof data) < 0);
+    CHECK(lnd_mc_input(&s, 8, data, sizeof data) < 0);
+    CHECK(lnd_mc_input(&s, 0, data, 0) == 0);
+    lnd_mutex_free(&s.io_lock);
+    CHECK(LND_IoFree(s.io) == LND_OK);
+}
+
 int main(void) {
     test_init(LND_LAYOUT_INTERLEAVED);
+    test_input_callback();
     LND_IO *io = lnd_io_open_memory("xxxtestdatazzz", 14);
     CHECK(lnd_io_window(io, 3, 8) == LND_OK);
     const LND_CODEC *codec = LND_MediaCodecGetCodec();
-    for (api = 35; api <= 36; api++) {
+    for (api = 33; api <= 36; api++) {
         for (encoding = 2; encoding <= 4; encoding += 2) {
             void *state = nullptr;
             LND_CODEC_INFO info;

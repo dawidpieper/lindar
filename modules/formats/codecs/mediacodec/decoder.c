@@ -28,10 +28,16 @@ static ssize_t lnd_mc_input(void *user, off64_t offset, void *dst, size_t size) 
     if (!size) return 0;
     if (offset < 0 || size > PTRDIFF_MAX) return -1;
     lnd_mutex_lock(&s->io_lock);
-    int64_t got = 0;
-    if (!s->closed && (uint64_t)offset < LND_IoGetSizeBytes(s->io) && LND_IoSeekBytes(s->io, (uint64_t)offset) == LND_OK) got = LND_IoRead(s->io, dst, size);
+    int64_t got = -1;
+    if (!s->closed) {
+        if ((uint64_t)offset >= LND_IoGetSizeBytes(s->io))
+            got = 0;
+        else if (LND_IoSeekBytes(s->io, (uint64_t)offset) == LND_OK)
+            got = LND_IoRead(s->io, dst, size);
+    }
     lnd_mutex_unlock(&s->io_lock);
-    return got > 0 ? (ssize_t)got : -1;
+    /* Android extractors can discard short tail reads when EOF returns -1. */
+    return got >= 0 ? (ssize_t)got : -1;
 }
 
 static ssize_t lnd_mc_size(void *user) { return (ssize_t)LND_IoGetSizeBytes(((lnd_mc_state *)user)->io); }
