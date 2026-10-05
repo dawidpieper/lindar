@@ -31,6 +31,7 @@ runs:
         echo "CC=$(cygpath -m /clang64/bin/clang.exe)" >> "$GITHUB_ENV"
         echo "CXX=$(cygpath -m /clang64/bin/clang++.exe)" >> "$GITHUB_ENV"
         echo "LND_RUNTIME_DIR=$(cygpath -m /clang64/bin)" >> "$GITHUB_ENV"
+        echo "RUBY_DLL_PATH=$(cygpath -m /clang64/bin)" >> "$GITHUB_ENV"
     - if: runner.os == 'Linux'
       shell: bash
       env:
