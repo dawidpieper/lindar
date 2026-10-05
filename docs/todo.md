@@ -5,7 +5,7 @@
 > This document defines the current requirements for publishing Lindar 1.0.
 > They may be expanded, reduced or otherwise changed at any time, without prior notice.
 
-Status as of **1 October 2026**.
+Status as of **5 October 2026**.
 
 ## Current status
 
@@ -23,8 +23,8 @@ Physical checks use real hardware. Codec conversion covers every decoder and enc
 | Linux ARM32 | Pending | Pending | Pending |
 | macOS x64 | Pending | Pending | Pending |
 | macOS ARM64 | Done | Done | Done |
-| Android ARM64 | Done | Pending | Pending |
-| iOS | Done | Pending | Pending |
+| Android ARM64 | Done | Partial | Done |
+| iOS | Done | Done | Done |
 | Cortex-M0 | Done | Pending | N/A |
 | Cortex-M33 | Done | Done | N/A |
 | ATmega2560 | Done | Partial | N/A |
@@ -58,7 +58,7 @@ These checks apply to every platform on which the feature is supported. Passing 
 
 ### Devices and recording
 
-- [ ] Check that mobile recording settings cover the intended use cases.
+- [x] Check that mobile recording settings cover the intended use cases.
 - [ ] Consider an optional Lindar module for managing recording permissions.
 - [ ] Extend the ASIO API where justified by missing use cases.
 
