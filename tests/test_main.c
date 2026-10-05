@@ -10,8 +10,10 @@
 #include "lindar_output.h"
 #include "lindar.h"
 
+#include "io/devices/capture.h"
 #include "io/reader.h"
 #include "playback/graph/ring.h"
+#include "playback/graph/sound.h"
 #include "lnd_modules.h"
 #if LND_MODULE_LOG
 #include "lindar_log.h"
@@ -2300,8 +2302,11 @@ static void test_split_mix(void) {
                (unsigned long long)LND_SourceGetPositionFrames(mic));
     stats lk = analyze(out, 9600, 2, 1, sample_rate_hz);
     CHECK(lk.peak > 0.2);
-    LND_SOURCE *mic2 = LND_SourceCreateDevice(nullptr, 2, sample_rate_hz, 0);
-    LND_SOURCE *mic3 = LND_SourceCreateDevice(nullptr, 2, sample_rate_hz, 0);
+    lnd_capture *input2 = lnd_capture_new(2, sample_rate_hz, 8192);
+    lnd_capture *input3 = lnd_capture_new(2, sample_rate_hz, 8192);
+    CHECK(input2 && input3);
+    LND_SOURCE *mic2 = (LND_SOURCE *)lnd_source_obj_create(lnd_capture_source_create(input2, 2, sample_rate_hz, 0), 0, LND_FORMAT_F32);
+    LND_SOURCE *mic3 = (LND_SOURCE *)lnd_source_obj_create(lnd_capture_source_create(input3, 2, sample_rate_hz, 0), 0, LND_FORMAT_F32);
     LND_NODE *avail = LND_NodeCreateMixer(2, sample_rate_hz, LND_MIX_AVAILABLE);
     LND_NODE *cont = LND_NodeCreateMixer(2, sample_rate_hz, LND_MIX_CONTINUOUS);
     CHECK(mic2 && mic3 && avail && cont);
@@ -2310,11 +2315,11 @@ static void test_split_mix(void) {
     LND_SOUND *sc = LND_NodeEnsureSound(cont, nullptr);
     CHECK(LND_SoundPlay(LND_SourceEnsureSound(mic2, nullptr)) == LND_OK && LND_SoundPlay(LND_SourceEnsureSound(mic3, nullptr)) == LND_OK);
     CHECK(LND_SoundReadF32(sc, out, 9600) == 9600);
-    sleep_ms(100);
+    lnd_capture_push(input2, pcm, LND_FORMAT_F32, 4096);
     uint64_t got1 = LND_SoundReadF32(sv, out, 9600);
-    CHECK(got1 > 0 && got1 < 9600);
+    CHECK(got1 == 4096);
     uint64_t got2 = LND_SoundReadF32(sv, out, 9600);
-    CHECK(got2 < 4800);
+    CHECK(got2 == 0);
     CHECK(LND_NodeConnect(lock, LND_DeviceEnsureOutputNode()) == LND_OK);
     sleep_ms(300);
     uint64_t p3 = LND_SourceGetPositionFrames(s3), pm = LND_SourceGetPositionFrames(mic);

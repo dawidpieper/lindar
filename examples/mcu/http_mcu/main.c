@@ -13,7 +13,7 @@ static struct {
     uint32_t polls;
     bool open;
 } network;
-static alignas(max_align_t) uint8_t sound_memory[512], renderer_memory[4096];
+alignas(max_align_t) static uint8_t sound_memory[512], renderer_memory[4096];
 static int16_t dma[2][BLOCK];
 
 static int32_t begin(void *user, const LND_HTTP_REQUEST *request, void **transfer) {

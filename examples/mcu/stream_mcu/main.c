@@ -5,7 +5,7 @@
 
 enum { RATE = 16000, BLOCK = 32, CAPACITY = 128 };
 
-static alignas(max_align_t) unsigned char queue_memory[4096], sound_memory[512], renderer_memory[4096];
+alignas(max_align_t) static unsigned char queue_memory[4096], sound_memory[512], renderer_memory[4096];
 static int16_t input[BLOCK], output[BLOCK];
 
 int main(void) {
