@@ -680,7 +680,8 @@ static void test_instances(void) {
     CHECK(LND_SoundSetOutput(s, nb) == LND_OK);
     CHECK(LND_SoundGetOutput(s) == nb);
     CHECK(LND_SoundPlay(s) == LND_OK);
-    sleep_ms(50);
+    for (unsigned t = 0; t < 2000 && !LND_SoundGetPositionFrames(s); t += 2)
+        sleep_ms(2);
     CHECK(LND_NodeGetInputCount(nb) == 1 && LND_NodeGetInputCount(LND_DeviceInstanceGetNode(a)) == 0);
     CHECK(LND_DeviceInstanceGetPositionFrames(b) > 0);
     CHECK(LND_SoundGetPositionFrames(s) > 0);
