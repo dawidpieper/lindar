@@ -420,6 +420,8 @@ int32_t lnd_http_ogg_seek(lnd_http_session *s, lnd_http_ogg *ogg, int64_t time_u
     lnd_decoder_reset(s->decoder);
     lnd_ogg_http_close(s, ogg);
     lnd_http_request_close(s);
+    for (lnd_ogg_range *range = ogg->ranges; range; range = range->next)
+        range->pinned = false;
     ogg->frame = (uint64_t)time_us / 1000000 * 48000 + (uint64_t)time_us % 1000000 * 48000 / 1000000;
     ogg->epoch++;
     ogg->cache_candidate = s->cache != nullptr;

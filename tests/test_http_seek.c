@@ -110,13 +110,14 @@ static void test_seek(const uint8_t *data, size_t bytes, bool worker, int mode, 
     bool fast = !mode && (!cache || cache >= 524288);
     uint64_t length = LND_SourceGetLengthFrames(reference);
     int64_t end_us = (int64_t)(length / 48000 * 1000000 + length % 48000 * 1000000 / 48000);
-    int64_t targets[] = {5000000, 30000000, 90000000, 5000000, 0, end_us, 0};
+    int64_t targets[] = {5000000, 30000000, 90000000, 5000000, 0, end_us, 0, 15000000, 45000000, 75000000, 105000000};
     if (length < 90 * 48000) {
         targets[0] = 500000;
         targets[1] = targets[3] = 2000000;
         targets[2] = 5000000;
     }
     for (unsigned at = 0; source && reference && at < LND_COUNTOF(targets); at++) {
+        if (at >= 7 && (!fast || targets[at] >= end_us)) continue;
         if (!fast && targets[at] == end_us) continue;
         if (mode > 1 && at > 0 && targets[at]) continue;
         if (cache && at != 2 && targets[at]) continue;
