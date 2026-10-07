@@ -539,24 +539,36 @@ static void test_playback_proc(uint32_t flags) {
 
 static void test_resample(uint32_t quality, uint32_t src_rate) {
     printf("resample quality %u from %u\n", quality, src_rate);
-    setup_null(false, 2, 48000 * 4);
+    LND_ConfigSet(LND_CFG_RUN_MODE, LND_MODE_SINGLE_THREADED);
     LND_ConfigSet(LND_CFG_AUDIO_RESAMPLE_QUALITY, quality);
+    capture_reset(2, 48000 * 4);
     CHECK(LND_LibraryInit() == LND_OK);
     LND_BUFFER *buffer = make_sine(src_rate, 2, 440.0, 0.5, 0.5);
     uint64_t frames = LND_BufferGetFrames(buffer);
     LND_SOURCE *src = LND_SourceCreateBuffer(buffer);
     LND_SOUND *s = LND_SourceEnsureSound(src, nullptr);
+    LND_NODE *mixer = LND_NodeCreateMixer(2, 48000, LND_MIX_AVAILABLE | LND_MIX_END);
+    CHECK(mixer && LND_SoundSetOutput(s, mixer) == LND_OK);
+    LND_RENDERER *renderer = LND_RendererCreateNode(mixer);
+    CHECK(renderer);
     CHECK(LND_SoundPlay(s) == LND_OK);
-    wait_state(s, LND_SOUND_STOPPED, 5000);
+    LND_PCM pcm = {.data = cap.data, .frames = cap.cap, .channels = 2, .format = LND_FORMAT_F32};
+    int64_t got = LND_RendererReadPcm(renderer, &pcm, 0, cap.cap);
+    CHECK(got > 0 && (uint64_t)got < cap.cap);
+    cap.frames = got > 0 ? (size_t)got : 0;
+    CHECK(LND_RendererReadPcm(renderer, &pcm, cap.cap - 1, 1) == 0);
     CHECK(LND_SoundGetState(s) == LND_SOUND_STOPPED);
+    CHECK(LND_RendererFree(renderer) == LND_OK);
     LND_SourceFree(src);
+    CHECK(LND_NodeFree(mixer) == LND_OK);
     LND_BufferFree(buffer);
     LND_LibraryFree();
     size_t start = capture_start();
     size_t out_frames = (size_t)((double)frames * 48000.0 / (double)src_rate);
     size_t skip = 2048;
-    CHECK(cap.frames >= start + out_frames);
-    if (cap.frames >= start + out_frames) {
+    CHECK(cap.frames + 1 >= out_frames && cap.frames <= out_frames + 1);
+    CHECK(cap.frames >= start + out_frames - skip);
+    if (cap.frames >= start + out_frames - skip) {
         stats l = analyze(cap.data + (start + skip) * 2, out_frames - skip * 2, 2, 0, 48000);
         CHECK_NEAR(l.freq, 440.0, 1.5);
         CHECK_NEAR(l.rms, 0.5 / sqrt(2.0), 0.01);
