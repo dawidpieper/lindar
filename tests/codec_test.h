@@ -9,7 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if LND_THREADS
+static _Atomic unsigned checks, failures, allocations, live_allocations;
+#else
 static unsigned checks, failures, allocations, live_allocations;
+#endif
 static int fail_allocation = -1;
 #define CHECK(x)                                                                                                                                               \
     do {                                                                                                                                                       \

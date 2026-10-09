@@ -30,7 +30,7 @@ static void play_mode(const char *base, const char *path, const char *reference_
     if (probe_duration) options.buffer.pcm_ms = 25;
     options.retry.delay_ms = 5;
     options.retry.attempts = 2;
-    options.retry.receive_timeout_ms = 1000;
+    options.retry.receive_timeout_ms = !strncmp(base, "https:", 6) ? options.retry.connect_timeout_ms : 1000;
     size_t size = 0;
     uint8_t *file = reference_path ? read_file(reference_path, &size) : nullptr;
     if (!strcmp(path, "/no-etag.opus")) options.buffer.segment_bytes = size;
